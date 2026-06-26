@@ -1,13 +1,14 @@
 # AIEngineeringLab
 
-A production-style AI Engineering project built from scratch.
+Production-style AI Engineering project built completely from scratch.
 
 ## Objectives
 
 - Build scalable AI applications
-- Learn MLOps and deployment
-- Develop production-ready APIs
-- Practice professional software engineering
+- Learn FastAPI and backend engineering
+- Master Docker and containerization
+- Implement Machine Learning and Deep Learning pipelines
+- Follow professional Git workflows
 
 ## Tech Stack
 

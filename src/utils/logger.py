@@ -1,20 +1,12 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import logging
+import sys
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+    ],
+)
 
-class Settings(BaseSettings):
-    PROJECT_NAME: str
-    VERSION: str
-    DEBUG: bool
-
-    HOST: str
-    PORT: int
-
-    DATABASE_URL: str
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-    )
-
-
-settings = Settings()
+logger = logging.getLogger("AIEngineeringLab")

@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
 from src.config.settings import settings
+from src.api.routes.health import router as health_router
+from src.utils.logger import logger
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -8,11 +10,10 @@ app = FastAPI(
     version=settings.VERSION,
 )
 
+logger.info("AIEngineeringLab API started successfully.")
 
-@app.get("/")
-def root():
-    return {
-        "message": f"Welcome to {settings.PROJECT_NAME} 🚀",
-        "status": "Running",
-        "debug": settings.DEBUG,
-    }
+app.include_router(
+    health_router,
+    prefix="/health",
+    tags=["Health"],
+)

@@ -34,14 +34,14 @@ def create_user(db: Session, user: UserCreate):
 
     return new_user
 
-def login_user(db: Session, user: UserLogin):
+def login_user(db: Session, email: str, password: str):
 
-    db_user = db.query(User).filter(User.email == user.email).first()
+    db_user = db.query(User).filter(User.email == email).first()
 
     if not db_user:
         return None
 
-    if not verify_password(user.password, db_user.hashed_password):
+    if not verify_password(password, db_user.hashed_password):
         return None
 
     access_token = create_access_token(

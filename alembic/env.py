@@ -1,5 +1,6 @@
 from src.database.base import Base
 from src.models.user import User
+from src.models.chat import Chat
 from src.config.settings import settings
 
 from logging.config import fileConfig

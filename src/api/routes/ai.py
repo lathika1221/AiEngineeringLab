@@ -7,7 +7,11 @@ from src.models.user import User
 from src.schemas.ai import ChatRequest, ChatResponse
 from src.schemas.chat import ChatHistory
 from src.services.ai_service import chat_with_ai
-from src.services.chat_service import save_chat, get_chat_history
+from src.services.chat_service import (
+    save_chat,
+    get_chat_history,
+    get_recent_chats,
+)
 
 router = APIRouter(
     prefix="/ai",
@@ -24,7 +28,15 @@ def chat(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    response = chat_with_ai(request.message)
+    history = get_recent_chats(
+        db=db,
+        user=current_user,
+    )
+
+    response = chat_with_ai(
+        message=request.message,
+        history=history,
+    )
 
     save_chat(
         db=db,

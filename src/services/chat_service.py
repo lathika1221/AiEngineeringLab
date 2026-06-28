@@ -33,3 +33,17 @@ def get_chat_history(
         .order_by(Chat.created_at.desc())
         .all()
     )
+def get_recent_chats(
+    db: Session,
+    user: User,
+    limit: int = 10,
+):
+    chats = (
+        db.query(Chat)
+        .filter(Chat.user_id == user.id)
+        .order_by(Chat.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return list(reversed(chats))

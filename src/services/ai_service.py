@@ -1,0 +1,20 @@
+from src.ai.groq_client import client
+from src.config.settings import settings
+
+
+def chat_with_ai(message: str) -> str:
+    response = client.chat.completions.create(
+        model=settings.MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are an AI assistant for AIEngineeringLab."
+            },
+            {
+                "role": "user",
+                "content": message
+            },
+        ],
+    )
+
+    return response.choices[0].message.content

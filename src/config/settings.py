@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    GROQ_API_KEY: str
+    AI_PROVIDER: str
+    MODEL_NAME: str
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

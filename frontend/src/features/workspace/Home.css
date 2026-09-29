@@ -1,0 +1,19 @@
+.home {
+    text-align: center;
+}
+
+.home h1 {
+    font-size: 90px;
+}
+
+.home h2 {
+    font-size: 48px;
+    color: var(--accent);
+    margin-top: 20px;
+}
+
+.home p {
+    margin-top: 18px;
+    color: var(--text-secondary);
+    font-size: 20px;
+}

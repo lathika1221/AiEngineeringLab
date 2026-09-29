@@ -1,0 +1,49 @@
+:root {
+
+    /* ==========================
+      COLORS
+  ========================== */
+
+    --bg-primary: #020617;
+    --bg-secondary: #071226;
+    --bg-surface: #0f172a;
+
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+
+    --accent: #38bdf8;
+
+    --text-primary: #f8fafc;
+    --text-secondary: #cbd5e1;
+    --text-muted: #64748b;
+
+    --success: #22c55e;
+    --error: #ef4444;
+
+    --border: rgba(255, 255, 255, .08);
+
+    /* ==========================
+      SPACING
+  ========================== */
+
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+
+    /* ==========================
+      RADIUS
+  ========================== */
+
+    --radius-md: 14px;
+    --radius-lg: 20px;
+
+    /* ==========================
+      SHADOWS
+  ========================== */
+
+    --shadow-primary:
+        0 0 30px rgba(37, 99, 235, .18);
+
+}

@@ -1,0 +1,72 @@
+.description {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.description h3 {
+    color: #38bdf8;
+    font-size: 24px;
+    margin: 0;
+}
+
+.description p {
+    margin-top: 8px;
+    color: #94a3b8;
+    font-size: 16px;
+}
+
+.compass {
+    position: relative;
+    width: 520px;
+    height: 320px;
+    margin: 40px auto;
+}
+
+.mode-node {
+    position: absolute;
+    width: 130px;
+    height: 52px;
+
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 999px;
+
+    background: #101a2f;
+    color: white;
+
+    cursor: pointer;
+
+    transition: .25s;
+
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.mode-node:hover {
+    border-color: #38bdf8;
+}
+
+.learn {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.explore {
+    left: 0;
+    top: 120px;
+}
+
+.research {
+    right: 0;
+    top: 120px;
+}
+
+.forge {
+    left: 90px;
+    bottom: 0;
+}
+
+.solve {
+    right: 90px;
+    bottom: 0;
+}

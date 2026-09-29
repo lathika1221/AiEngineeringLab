@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from fastapi.responses import StreamingResponse
 
 from src.auth.dependencies import get_current_user
 from src.database.session import get_db
 from src.models.user import User
 from src.schemas.ai import ChatRequest, ChatResponse
 from src.schemas.chat import ChatHistory
-from src.services.ai_service import chat_with_ai
+from src.services.ai_service import (
+    chat_with_ai,
+    stream_chat_with_ai,
+)
 from src.services.chat_service import (
     save_chat,
     get_chat_history,
@@ -47,6 +51,27 @@ def chat(
 
     return ChatResponse(
         response=response,
+    )
+
+@router.post(
+    "/chat/stream",
+)
+def stream_chat(
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    history = get_recent_chats(
+        db=db,
+        user=current_user,
+    )
+
+    return StreamingResponse(
+        stream_chat_with_ai(
+            message=request.message,
+            history=history,
+        ),
+        media_type="text/plain",
     )
 
 

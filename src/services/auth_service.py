@@ -1,15 +1,13 @@
 from sqlalchemy.orm import Session
 
 from src.auth.hash import hash_password
-from src.models.user import User
-from src.schemas.user import UserCreate
 from src.auth.hash import verify_password
 from src.auth.jwt import create_access_token
-from src.schemas.login import UserLogin
+from src.models.user import User
+from src.schemas.user import UserCreate
 
 
 def create_user(db: Session, user: UserCreate):
-
     existing = (
         db.query(User)
         .filter(
@@ -34,14 +32,28 @@ def create_user(db: Session, user: UserCreate):
 
     return new_user
 
-def login_user(db: Session, email: str, password: str):
 
-    db_user = db.query(User).filter(User.email == email).first()
+def login_user(
+    db: Session,
+    identifier: str,
+    password: str,
+):
+    db_user = (
+        db.query(User)
+        .filter(
+            (User.email == identifier)
+            | (User.username == identifier)
+        )
+        .first()
+    )
 
     if not db_user:
         return None
 
-    if not verify_password(password, db_user.hashed_password):
+    if not verify_password(
+        password,
+        db_user.hashed_password,
+    ):
         return None
 
     access_token = create_access_token(

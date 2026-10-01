@@ -1,0 +1,18 @@
+warning: in the working copy of 'frontend/src/App.tsx', LF will be replaced by CRLF the next time Git touches it
+ frontend/src/App.tsx                               | 139 [32m+++++++++[m[31m-[m
+ frontend/src/app/layouts/WorkspaceLayout.css       | 131 [32m+++++++++[m
+ frontend/src/app/layouts/WorkspaceLayout.tsx       | 115 [32m+++++++[m[31m-[m
+ frontend/src/features/workspace/MissionControl.css | 305 [32m++++++++++++++++++++[m[31m-[m
+ frontend/src/features/workspace/MissionControl.tsx | 223 [32m++++++++++++[m[31m---[m
+ .../src/shared/components/EngineeringCompass.css   | 118 [32m+++++[m[31m---[m
+ frontend/src/shared/styles/globals.css             |  17 [32m+[m[31m-[m
+ src/api/main.py                                    |  25 [32m+[m[31m-[m
+ src/api/routes/ai.py                               | 128 [32m++++++++[m[31m-[m
+ src/api/routes/auth.py                             |  13 [32m+[m[31m-[m
+ src/api/routes/users.py                            | 194 [32m++++++++++++[m[31m-[m
+ src/config/settings.py                             |   4 [32m+[m[31m-[m
+ src/models/user.py                                 |  43 [32m++[m[31m-[m
+ src/schemas/ai.py                                  |   8 [32m+[m[31m-[m
+ src/services/ai_service.py                         | 255 [32m++++++++++++++[m[31m---[m
+ src/services/auth_service.py                       |  26 [32m+[m[31m-[m
+ 16 files changed, 1585 insertions(+), 159 deletions(-)

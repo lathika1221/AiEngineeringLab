@@ -1,6 +1,11 @@
-import { useState } from "react";
+import {
+    useEffect,
+    useState,
+} from "react";
+
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
 import "./Chat.css";
 
 type Message = {
@@ -16,26 +21,40 @@ type MemoryCandidate = {
 
 type ChatProps = {
     onLogout?: () => void;
+    initialWorkflow?: string | null;
 };
 
 export default function Chat({
     onLogout,
+    initialWorkflow,
 }: ChatProps) {
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            role: "assistant",
-            content:
-                "I'm LATZ. Tell me what you're building, debugging, researching, or trying to understand.",
-        },
-    ]);
+    const [messages, setMessages] =
+        useState<Message[]>([
+            {
+                role: "assistant",
+                content:
+                    "I'm LATZ. Tell me what you're building, debugging, researching, or trying to understand.",
+            },
+        ]);
 
-    const [input, setInput] = useState("");
-    const [loading, setLoading] = useState(false);
+    const [input, setInput] =
+        useState("");
+
+    const [loading, setLoading] =
+        useState(false);
+
     const [memoryCandidate, setMemoryCandidate] =
-        useState<MemoryCandidate | null>(null);
+        useState<MemoryCandidate | null>(
+            null,
+        );
+
+    const [workflowStarted, setWorkflowStarted] =
+        useState(false);
 
     function handleUnauthorized() {
-        localStorage.removeItem("access_token");
+        localStorage.removeItem(
+            "access_token",
+        );
 
         if (onLogout) {
             onLogout();
@@ -49,19 +68,22 @@ export default function Chat({
         token: string,
     ) {
         try {
-            const response = await fetch(
-                "http://127.0.0.1:8000/ai/memory-candidate",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
+            const response =
+                await fetch(
+                    "http://127.0.0.1:8000/ai/memory-candidate",
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/json",
+                            Authorization:
+                                `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                            message,
+                        }),
                     },
-                    body: JSON.stringify({
-                        message,
-                    }),
-                },
-            );
+                );
 
             if (response.status === 401) {
                 handleUnauthorized();
@@ -72,7 +94,8 @@ export default function Chat({
                 return;
             }
 
-            const data = await response.json();
+            const data =
+                await response.json();
 
             if (
                 data.candidate &&
@@ -80,11 +103,14 @@ export default function Chat({
             ) {
                 setMemoryCandidate({
                     memory_type:
-                        data.candidate.memory_type,
+                        data.candidate
+                            .memory_type,
                     content:
-                        data.candidate.content,
+                        data.candidate
+                            .content,
                     memory_key:
-                        data.candidate.memory_key,
+                        data.candidate
+                            .memory_key,
                 });
             }
         } catch (error) {
@@ -111,22 +137,27 @@ export default function Chat({
                 return;
             }
 
-            const response = await fetch(
-                "http://127.0.0.1:8000/ai/memory-confirm",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
+            const response =
+                await fetch(
+                    "http://127.0.0.1:8000/ai/memory-confirm",
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/json",
+                            Authorization:
+                                `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                            memory_type:
+                                memoryCandidate
+                                    .memory_type,
+                            content:
+                                memoryCandidate
+                                    .content,
+                        }),
                     },
-                    body: JSON.stringify({
-                        memory_type:
-                            memoryCandidate.memory_type,
-                        content:
-                            memoryCandidate.content,
-                    }),
-                },
-            );
+                );
 
             if (response.status === 401) {
                 handleUnauthorized();
@@ -139,13 +170,16 @@ export default function Chat({
                 );
             }
 
-            const data = await response.json();
+            const data =
+                await response.json();
 
             if (
                 data.saved ||
                 data.duplicate
             ) {
-                setMemoryCandidate(null);
+                setMemoryCandidate(
+                    null,
+                );
             }
         } catch (error) {
             console.error(
@@ -159,10 +193,19 @@ export default function Chat({
         setMemoryCandidate(null);
     }
 
-    async function sendMessage() {
-        const message = input.trim();
+    async function sendMessage(
+        messageOverride?: string,
+    ) {
+        const message =
+            (
+                messageOverride ??
+                input
+            ).trim();
 
-        if (!message || loading) {
+        if (
+            !message ||
+            loading
+        ) {
             return;
         }
 
@@ -188,7 +231,10 @@ export default function Chat({
             },
         ]);
 
-        setInput("");
+        if (!messageOverride) {
+            setInput("");
+        }
+
         setLoading(true);
 
         void checkMemoryCandidate(
@@ -197,22 +243,28 @@ export default function Chat({
         );
 
         try {
-            const response = await fetch(
-                "http://127.0.0.1:8000/ai/chat/stream",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
+            const response =
+                await fetch(
+                    "http://127.0.0.1:8000/ai/chat/stream",
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/json",
+                            Authorization:
+                                `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                            message,
+                        }),
                     },
-                    body: JSON.stringify({
-                        message,
-                    }),
-                },
-            );
+                );
 
             if (!response.ok) {
-                if (response.status === 401) {
+                if (
+                    response.status ===
+                    401
+                ) {
                     handleUnauthorized();
                     return;
                 }
@@ -240,79 +292,112 @@ export default function Chat({
                 const {
                     value,
                     done,
-                } = await reader.read();
+                } =
+                    await reader.read();
 
                 if (done) {
                     break;
                 }
 
-                accumulated += decoder.decode(
-                    value,
-                    { stream: true },
-                );
+                accumulated +=
+                    decoder.decode(
+                        value,
+                        {
+                            stream: true,
+                        },
+                    );
 
-                setMessages((current) => {
+                setMessages(
+                    (current) => {
+                        const updated = [
+                            ...current,
+                        ];
+
+                        updated[
+                            updated.length -
+                            1
+                        ] = {
+                            role:
+                                "assistant",
+                            content:
+                                accumulated,
+                        };
+
+                        return updated;
+                    },
+                );
+            }
+
+            accumulated +=
+                decoder.decode();
+
+            setMessages(
+                (current) => {
                     const updated = [
                         ...current,
                     ];
 
                     updated[
-                        updated.length - 1
+                        updated.length -
+                        1
                     ] = {
-                        role: "assistant",
+                        role:
+                            "assistant",
                         content:
                             accumulated,
                     };
 
                     return updated;
-                });
-            }
-
-            accumulated += decoder.decode();
-
-            setMessages((current) => {
-                const updated = [
-                    ...current,
-                ];
-
-                updated[
-                    updated.length - 1
-                ] = {
-                    role: "assistant",
-                    content:
-                        accumulated,
-                };
-
-                return updated;
-            });
+                },
+            );
         } catch (error) {
             console.error(error);
 
-            setMessages((current) => {
-                const updated = [
-                    ...current,
-                ];
+            setMessages(
+                (current) => {
+                    const updated = [
+                        ...current,
+                    ];
 
-                updated[
-                    updated.length - 1
-                ] = {
-                    role: "assistant",
-                    content:
-                        "I couldn't reach the AI service right now. Check that the AEL backend is running and you're authenticated.",
-                };
+                    updated[
+                        updated.length -
+                        1
+                    ] = {
+                        role:
+                            "assistant",
+                        content:
+                            "I couldn't reach the AI service right now. Check that the AEL backend is running and you're authenticated.",
+                    };
 
-                return updated;
-            });
+                    return updated;
+                },
+            );
         } finally {
             setLoading(false);
         }
     }
 
+    useEffect(() => {
+        if (
+            initialWorkflow &&
+            !workflowStarted
+        ) {
+            setWorkflowStarted(true);
+
+            void sendMessage(
+                initialWorkflow,
+            );
+        }
+    }, [
+        initialWorkflow,
+        workflowStarted,
+    ]);
+
     function handleKeyDown(
         event: React.KeyboardEvent<HTMLInputElement>,
     ) {
         if (event.key === "Enter") {
-            sendMessage();
+            void sendMessage();
         }
     }
 
@@ -337,6 +422,7 @@ export default function Chat({
 
                 <div className="chat-status">
                     <span />
+
                     {loading
                         ? "Generating"
                         : "Ready"}
@@ -345,7 +431,10 @@ export default function Chat({
 
             <div className="chat-messages">
                 {messages.map(
-                    (message, index) => (
+                    (
+                        message,
+                        index,
+                    ) => (
                         <div
                             key={`${message.role}-${index}`}
                             className={`chat-message ${message.role}`}
@@ -366,9 +455,10 @@ export default function Chat({
                                                 remarkGfm,
                                             ]}
                                         >
-                                            {
-                                                message.content
-                                            }
+                                            {message.content.replace(
+                                                /<br\s*\/?>/gi,
+                                                "\n",
+                                            )}
                                         </ReactMarkdown>
                                     ) : (
                                         <span className="typing">
@@ -402,6 +492,7 @@ export default function Chat({
 
                             <div className="memory-candidate-actions">
                                 <button
+                                    type="button"
                                     onClick={
                                         saveMemory
                                     }
@@ -410,6 +501,7 @@ export default function Chat({
                                 </button>
 
                                 <button
+                                    type="button"
                                     onClick={
                                         dismissMemory
                                     }
@@ -438,7 +530,10 @@ export default function Chat({
                 />
 
                 <button
-                    onClick={sendMessage}
+                    type="button"
+                    onClick={() =>
+                        void sendMessage()
+                    }
                     disabled={
                         loading ||
                         !input.trim()

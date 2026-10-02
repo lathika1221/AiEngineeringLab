@@ -60,3 +60,9 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+    goals = relationship(
+        "Goal",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

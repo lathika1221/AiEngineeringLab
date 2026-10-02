@@ -6,6 +6,8 @@ from src.database.session import get_db
 
 from src.models.user import User
 
+from src.services.context_service import get_user_context
+
 from src.schemas.profile import (
     ProfileCreate,
     ProfileUpdate,
@@ -30,6 +32,15 @@ from src.services.life_role_service import (
     delete_life_role,
 )
 
+from src.schemas.goal import GoalCreate, GoalResponse
+
+from src.services.goal_service import (
+    create_goal,
+    get_goals,
+    get_goal,
+    update_goal_status,
+    delete_goal,
+)
 
 router = APIRouter(
     prefix="/users",
@@ -209,4 +220,100 @@ def remove_life_role(
 
     return {
         "message": "Life role deleted successfully.",
+    }
+
+@router.get(
+    "/context",
+)
+def read_user_context(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_user_context(
+        db=db,
+        user=current_user,
+    )
+
+@router.get(
+    "/goals",
+    response_model=list[GoalResponse],
+)
+def read_goals(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_goals(
+        db=db,
+        user=current_user,
+    )
+
+
+@router.post(
+    "/goals",
+    response_model=GoalResponse,
+)
+def add_goal(
+    goal: GoalCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return create_goal(
+        db=db,
+        user=current_user,
+        title=goal.title,
+        description=goal.description,
+        category=goal.category,
+        priority=goal.priority,
+        target_date=goal.target_date,
+    )
+
+
+@router.patch(
+    "/goals/{goal_id}/status",
+    response_model=GoalResponse,
+)
+def change_goal_status(
+    goal_id: int,
+    status: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    updated_goal = update_goal_status(
+        db=db,
+        user=current_user,
+        goal_id=goal_id,
+        status=status,
+    )
+
+    if updated_goal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Goal not found",
+        )
+
+    return updated_goal
+
+
+@router.delete(
+    "/goals/{goal_id}",
+)
+def remove_goal(
+    goal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    deleted_goal = delete_goal(
+        db=db,
+        user=current_user,
+        goal_id=goal_id,
+    )
+
+    if deleted_goal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Goal not found",
+        )
+
+    return {
+        "message": "Goal deleted successfully",
     }

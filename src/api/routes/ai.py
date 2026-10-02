@@ -38,6 +38,10 @@ from src.services.memory_extraction_service import (
     detect_memory_candidate,
 )
 
+from src.services.context_service import (
+    get_user_context,
+)
+
 
 router = APIRouter(
     prefix="/ai",
@@ -133,10 +137,16 @@ def chat(
         user=current_user,
     )
 
+    context = get_user_context(
+        db=db,
+        user=current_user,
+    )
+
     response = chat_with_ai(
         message=request.message,
         history=history,
         memories=memories,
+        context=context,
     )
 
     save_chat(
@@ -169,6 +179,11 @@ def stream_chat(
         user=current_user,
     )
 
+    context = get_user_context(
+        db=db,
+        user=current_user,
+    )
+
     def generate():
         chunks = []
 
@@ -176,6 +191,7 @@ def stream_chat(
             message=request.message,
             history=history,
             memories=memories,
+            context=context,
         ):
             chunks.append(chunk)
             yield chunk

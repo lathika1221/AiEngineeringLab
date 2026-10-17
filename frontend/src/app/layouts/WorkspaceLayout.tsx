@@ -4,6 +4,7 @@ import "./WorkspaceLayout.css";
 
 import MissionControl from "../../features/workspace/MissionControl";
 import EngineeringWorkspace from "../../features/workspace/EngineeringWorkspace";
+import type { WorkspaceWorkflow } from "../../features/workspace/EngineeringWorkspace";
 import Chat from "../../features/chat/Chat";
 import CommandBar from "../../shared/components/CommandBar";
 
@@ -37,8 +38,10 @@ export default function WorkspaceLayout({
     const [workspaceAction, setWorkspaceAction] =
         useState<WorkspaceAction>("forge");
 
-    const [workflowPrompt, setWorkflowPrompt] =
-        useState<string | null>(null);
+    const [workflow, setWorkflow] =
+        useState<WorkspaceWorkflow | null>(
+            null,
+        );
 
     useEffect(() => {
         async function loadProfile() {
@@ -85,28 +88,27 @@ export default function WorkspaceLayout({
         action: WorkspaceAction,
     ) {
         setWorkspaceAction(action);
-        setWorkflowPrompt(null);
+        setWorkflow(null);
         setView("workspace");
     }
 
     function openChat() {
-        setWorkflowPrompt(null);
+        setWorkflow(null);
         setView("chat");
     }
 
     function openWorkflow(
-        action: string,
+        selectedWorkflow: WorkspaceWorkflow,
     ) {
-        const prompt =
-            `I want to use the ${workspaceAction} mode. ` +
-            `Let's start with: ${action}.`;
+        setWorkflow(
+            selectedWorkflow,
+        );
 
-        setWorkflowPrompt(prompt);
         setView("chat");
     }
 
     function openMission() {
-        setWorkflowPrompt(null);
+        setWorkflow(null);
         setView("mission");
     }
 
@@ -167,8 +169,9 @@ export default function WorkspaceLayout({
                     <Chat
                         onLogout={onLogout}
                         initialWorkflow={
-                            workflowPrompt
+                            workflow
                         }
+                        projectId={workflow?.projectId ?? null}
                     />
                 ) : view === "workspace" ? (
                     <EngineeringWorkspace

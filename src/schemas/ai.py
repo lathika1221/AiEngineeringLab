@@ -1,8 +1,15 @@
-from pydantic import BaseModel
+from typing import Literal
+from pydantic import BaseModel, Field
+
+Engine = Literal["forge", "learn", "research", "explore", "solve"]
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1)
+    project_id: int | None = None
+    conversation_id: int | None = None
+    engine: Engine | None = None
+    action: str | None = None
 
 
 class ChatResponse(BaseModel):

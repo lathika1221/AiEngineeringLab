@@ -3,8 +3,17 @@ from zoneinfo import ZoneInfo
 
 from src.ai.groq_client import client
 from src.config.settings import settings
+
 from src.services.context_relevance_service import (
     select_relevant_context,
+)
+
+from src.services.engine_router import (
+    get_engine_instructions,
+)
+
+from src.services.engine_service import (
+    build_execution_context,
 )
 
 
@@ -141,8 +150,8 @@ Answer the actual question instead of producing a generic response.
 Do not invent facts, memories, project details, tool capabilities, or
 previous conversations.
 
-If information is missing and it materially affects the answer, say what
-is missing.
+If information is missing and it materially affects the answer, say what is
+missing.
 
 When several solutions are possible, explain the relevant trade-offs rather
 than pretending there is only one solution.
@@ -184,9 +193,7 @@ Avoid:
 - unnecessary repetition
 - filler
 - fake enthusiasm
-- unnecessary TL;DR sections
-- repeating the user's question
-- excessive disclaimers
+- unnecessary disclaimers
 
 Use a TL;DR only when the response is genuinely long or complex and the
 summary adds value.
@@ -244,10 +251,17 @@ def build_memory_context(
         if isinstance(memory, dict):
             memory_type = memory.get(
                 "type",
-                memory.get("memory_type", "memory"),
+                memory.get(
+                    "memory_type",
+                    "memory",
+                ),
             )
+
             content = str(
-                memory.get("content", "")
+                memory.get(
+                    "content",
+                    "",
+                )
             )
         else:
             memory_type = memory.memory_type
@@ -273,9 +287,15 @@ def build_life_context(
     profile = context.get("profile")
 
     if profile:
-        display_name = profile.get("display_name")
+        display_name = profile.get(
+            "display_name"
+        )
+
         bio = profile.get("bio")
-        timezone = profile.get("timezone")
+
+        timezone = profile.get(
+            "timezone"
+        )
 
         if display_name:
             lines.append(
@@ -302,7 +322,10 @@ def build_life_context(
         lines.append("Life roles:")
 
         for role in life_roles[:MAX_ROLES]:
-            role_name = role.get("role")
+            role_name = role.get(
+                "role"
+            )
+
             description = role.get(
                 "description"
             )
@@ -333,10 +356,14 @@ def build_life_context(
             goal_line = f"- {title}"
 
             if category:
-                goal_line += f" [{category}]"
+                goal_line += (
+                    f" [{category}]"
+                )
 
             if status:
-                goal_line += f" ({status})"
+                goal_line += (
+                    f" ({status})"
+                )
 
             lines.append(goal_line)
 
@@ -357,6 +384,8 @@ def build_messages(
     history: list = None,
     memories: list = None,
     context: dict = None,
+    engine: str | None = None,
+    action: str | None = None,
 ):
     messages = [
         {
@@ -365,25 +394,85 @@ def build_messages(
         }
     ]
 
-    runtime_context = build_runtime_context(
-        context
+    engine_instructions = (
+        get_engine_instructions(
+            engine=engine,
+            action=action,
+        )
+    )
+
+    execution_context = (
+        build_execution_context(
+            engine=engine,
+            action=action,
+        )
+    )
+
+    if engine_instructions:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The following structured "
+                    "engineering workflow is "
+                    "currently active. Follow it "
+                    "when responding to the user.\n\n"
+                    f"{engine_instructions}"
+                ),
+            }
+        )
+
+    if execution_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": execution_context,
+            }
+        )
+    current_project = context.get("current_project") if context else None
+
+    if current_project:
+        project_context = (
+            "ACTIVE ENGINEERING PROJECT\n"
+            "The user is currently working on this project. "
+            "Use these details when answering project-related requests.\n\n"
+            f"Project ID: {current_project.get('id')}\n"
+            f"Name: {current_project.get('name')}\n"
+            f"Description: {current_project.get('description') or 'Not specified'}\n"
+            f"Status: {current_project.get('status')}\n"
+            f"Preferred engine: {current_project.get('engine') or 'Not specified'}\n"
+            f"Technology stack: {current_project.get('tech_stack') or 'Not specified'}"
+        )
+
+        messages.append(
+            {
+                "role": "system",
+                "content": project_context,
+            }
+        )
+    runtime_context = (
+        build_runtime_context(
+            context
+        )
     )
 
     messages.append(
         {
             "role": "system",
             "content": (
-                "The following runtime date and time "
-                "information is authoritative. "
-                "Do not calculate or guess the weekday "
-                "yourself.\n\n"
+                "The following runtime date and "
+                "time information is authoritative. "
+                "Do not calculate or guess the "
+                "weekday yourself.\n\n"
                 f"{runtime_context}"
             ),
         }
     )
 
-    life_context = build_life_context(
-        context
+    life_context = (
+        build_life_context(
+            context
+        )
     )
 
     if life_context:
@@ -391,16 +480,19 @@ def build_messages(
             {
                 "role": "system",
                 "content": (
-                    "The following is the user's relevant "
-                    "life context for this request. "
-                    "Use it only when relevant.\n\n"
+                    "The following is the user's "
+                    "relevant life context for this "
+                    "request. Use it only when "
+                    "relevant.\n\n"
                     f"{life_context}"
                 ),
             }
         )
 
-    memory_context = build_memory_context(
-        memories
+    memory_context = (
+        build_memory_context(
+            memories
+        )
     )
 
     if memory_context:
@@ -408,10 +500,11 @@ def build_messages(
             {
                 "role": "system",
                 "content": (
-                    "The following are relevant memories "
-                    "explicitly saved for this user. "
-                    "Use them only when relevant to the "
-                    "current request.\n\n"
+                    "The following are relevant "
+                    "memories explicitly saved for "
+                    "this user. Use them only when "
+                    "relevant to the current "
+                    "request.\n\n"
                     f"{memory_context}"
                 ),
             }
@@ -425,13 +518,17 @@ def build_messages(
         for chat in reversed(
             recent_history
         ):
-            user_message = chat.user_message[
-                -MAX_USER_CHARS:
-            ]
+            user_message = (
+                chat.user_message[
+                    -MAX_USER_CHARS:
+                ]
+            )
 
-            ai_response = chat.ai_response[
-                :MAX_ASSISTANT_CHARS
-            ]
+            ai_response = (
+                chat.ai_response[
+                    :MAX_ASSISTANT_CHARS
+                ]
+            )
 
             messages.append(
                 {
@@ -469,6 +566,7 @@ def get_relevant_context(
             "life_roles": [],
             "goals": [],
             "memories": [],
+            "current_project": None,
         }
 
     return select_relevant_context(
@@ -479,22 +577,27 @@ def get_relevant_context(
         max_memories=MAX_MEMORIES,
     )
 
-
 def chat_with_ai(
     message: str,
     history: list = None,
     memories: list = None,
     context: dict = None,
+    engine: str | None = None,
+    action: str | None = None,
 ) -> str:
 
-    relevant_context = get_relevant_context(
-        message=message,
-        context=context,
+    relevant_context = (
+        get_relevant_context(
+            message=message,
+            context=context,
+        )
     )
 
-    relevant_memories = relevant_context.get(
-        "memories",
-        [],
+    relevant_memories = (
+        relevant_context.get(
+            "memories",
+            [],
+        )
     )
 
     messages = build_messages(
@@ -502,25 +605,42 @@ def chat_with_ai(
         history=history,
         memories=relevant_memories,
         context=relevant_context,
+        engine=engine,
+        action=action,
     )
 
     print("=== LATZ AI ===")
+
     print(
         "Provider:",
         settings.AI_PROVIDER,
     )
+
     print(
         "Model:",
         settings.MODEL_NAME,
     )
+
+    print(
+        "Engine:",
+        engine,
+    )
+
+    print(
+        "Action:",
+        action,
+    )
+
     print(
         "History messages:",
         len(history or []),
     )
+
     print(
         "Relevant memories:",
         len(relevant_memories),
     )
+
     print(
         "Relevant life roles:",
         len(
@@ -530,6 +650,7 @@ def chat_with_ai(
             )
         ),
     )
+
     print(
         "Relevant goals:",
         len(
@@ -539,15 +660,21 @@ def chat_with_ai(
             )
         ),
     )
+
     print("================")
 
-    response = client.chat.completions.create(
-        model=settings.MODEL_NAME,
-        messages=messages,
-        max_tokens=MAX_OUTPUT_TOKENS,
+    response = (
+        client.chat.completions.create(
+            model=settings.MODEL_NAME,
+            messages=messages,
+            max_tokens=MAX_OUTPUT_TOKENS,
+        )
     )
 
-    return response.choices[0].message.content
+    return (
+        response.choices[0]
+        .message.content
+    )
 
 
 def stream_chat_with_ai(
@@ -555,34 +682,55 @@ def stream_chat_with_ai(
     history: list = None,
     memories: list = None,
     context: dict = None,
+    engine: str | None = None,
+    action: str | None = None,
 ):
-    relevant_context = get_relevant_context(
-        message=message,
-        context=context,
+    relevant_context = (
+        get_relevant_context(
+            message=message,
+            context=context,
+        )
     )
 
-    relevant_memories = relevant_context.get(
-        "memories",
-        [],
+    relevant_memories = (
+        relevant_context.get(
+            "memories",
+            [],
+        )
     )
 
     print("=== LATZ STREAM AI ===")
+
     print(
         "Provider:",
         settings.AI_PROVIDER,
     )
+
     print(
         "Model:",
         settings.MODEL_NAME,
     )
+
+    print(
+        "Engine:",
+        engine,
+    )
+
+    print(
+        "Action:",
+        action,
+    )
+
     print(
         "History messages:",
         len(history or []),
     )
+
     print(
         "Relevant memories:",
         len(relevant_memories),
     )
+
     print(
         "Relevant life roles:",
         len(
@@ -592,6 +740,7 @@ def stream_chat_with_ai(
             )
         ),
     )
+
     print(
         "Relevant goals:",
         len(
@@ -601,6 +750,7 @@ def stream_chat_with_ai(
             )
         ),
     )
+
     print("======================")
 
     messages = build_messages(
@@ -608,18 +758,26 @@ def stream_chat_with_ai(
         history=history,
         memories=relevant_memories,
         context=relevant_context,
+        engine=engine,
+        action=action,
     )
 
-    stream = client.chat.completions.create(
-        model=settings.MODEL_NAME,
-        messages=messages,
-        max_tokens=MAX_OUTPUT_TOKENS,
-        stream=True,
+    stream = (
+        client.chat.completions.create(
+            model=settings.MODEL_NAME,
+            messages=messages,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            stream=True,
+        )
     )
 
     for chunk in stream:
         if (
             chunk.choices
-            and chunk.choices[0].delta.content
+            and chunk.choices[0]
+            .delta.content
         ):
-            yield chunk.choices[0].delta.content
+            yield (
+                chunk.choices[0]
+                .delta.content
+            )

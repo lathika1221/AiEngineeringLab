@@ -1,8 +1,9 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from src.ai.groq_client import client
+from src.ai.provider import get_ai_client
 from src.config.settings import settings
+from src.services.tool_calling_service import run_tool_calling
 
 from src.services.context_relevance_service import (
     select_relevant_context,
@@ -663,17 +664,9 @@ def chat_with_ai(
 
     print("================")
 
-    response = (
-        client.chat.completions.create(
-            model=settings.MODEL_NAME,
-            messages=messages,
-            max_tokens=MAX_OUTPUT_TOKENS,
-        )
-    )
-
-    return (
-        response.choices[0]
-        .message.content
+    return run_tool_calling(
+        client=get_ai_client(),
+        messages=messages,
     )
 
 
@@ -763,7 +756,7 @@ def stream_chat_with_ai(
     )
 
     stream = (
-        client.chat.completions.create(
+        get_ai_client().chat.completions.create(
             model=settings.MODEL_NAME,
             messages=messages,
             max_tokens=MAX_OUTPUT_TOKENS,

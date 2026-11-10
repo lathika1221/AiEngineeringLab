@@ -92,18 +92,16 @@ export default function MissionControl({
         useState<UserContext | null>(null);
 
     const [loadingContext, setLoadingContext] =
-        useState(true);
+        useState(() => Boolean(localStorage.getItem("access_token")));
 
     const [contextError, setContextError] =
-        useState(false);
+        useState(() => !localStorage.getItem("access_token"));
 
     useEffect(() => {
         const accessToken =
             localStorage.getItem("access_token");
 
         if (!accessToken) {
-            setLoadingContext(false);
-            setContextError(true);
             return;
         }
 

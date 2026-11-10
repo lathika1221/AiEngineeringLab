@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./EngineeringWorkspace.css";
 import { motion } from "framer-motion";
 
 import type { WorkspaceAction } from "../../app/layouts/WorkspaceLayout";
+
+import ExperimentsLab from "./ExperimentsLab";
 
 export type WorkspaceWorkflow = {
     engine:
@@ -36,6 +38,17 @@ type ProjectForm = {
     status: string;
     engine: string;
     tech_stack: string;
+};
+
+type DashboardProject = {
+    id: number;
+    name: string;
+    description: string | null;
+    status: string;
+    engine: string | null;
+    tech_stack: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
 };
 
 type CreatedProject = {
@@ -234,6 +247,145 @@ export default function EngineeringWorkspace({
     onAction,
 }: EngineeringWorkspaceProps) {
     const content = workspaceContent[mode];
+    const [projects, setProjects] = useState<DashboardProject[]>([]);
+    const [projectsLoading, setProjectsLoading] = useState(false);
+    const [projectsError, setProjectsError] = useState("");
+    const [editingProject, setEditingProject] = useState<DashboardProject | null>(null);
+    const [savingProject, setSavingProject] = useState(false);
+    const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null);
+    const [editForm, setEditForm] = useState({
+        name: "",
+        description: "",
+        status: "active",
+        engine: "",
+        tech_stack: "",
+    });
+
+    async function loadProjects() {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+            setProjectsError("Please sign in again to load your projects.");
+            return;
+        }
+
+        setProjectsLoading(true);
+        setProjectsError("");
+        try {
+            const response = await fetch("http://127.0.0.1:8000/projects", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (response.status === 401) {
+                localStorage.removeItem("access_token");
+                window.location.reload();
+                return;
+            }
+            if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+            setProjects(await response.json() as DashboardProject[]);
+        } catch (error) {
+            console.error("Projects dashboard failed to load:", error);
+            setProjectsError("Could not load projects. Check that the backend is running.");
+        } finally {
+            setProjectsLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        if (mode !== "projects") return;
+
+        const timeoutId = window.setTimeout(() => {
+            void loadProjects();
+        }, 0);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [mode]);
+
+    function startEditing(project: DashboardProject) {
+        setEditingProject(project);
+        setEditForm({
+            name: project.name,
+            description: project.description ?? "",
+            status: project.status,
+            engine: project.engine ?? "",
+            tech_stack: project.tech_stack ?? "",
+        });
+        setProjectsError("");
+    }
+
+    async function saveProjectChanges() {
+        if (!editingProject || !editForm.name.trim()) {
+            setProjectsError("Project name is required.");
+            return;
+        }
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+            setProjectsError("Please sign in again.");
+            return;
+        }
+
+        setSavingProject(true);
+        setProjectsError("");
+        try {
+            const response = await fetch(`http://127.0.0.1:8000/projects/${editingProject.id}`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                    name: editForm.name.trim(),
+                    description: editForm.description.trim() || null,
+                    status: editForm.status,
+                    engine: editForm.engine || null,
+                    tech_stack: editForm.tech_stack.trim() || null,
+                }),
+            });
+            if (response.status === 401) {
+                localStorage.removeItem("access_token");
+                window.location.reload();
+                return;
+            }
+            if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+            const updated = await response.json() as DashboardProject;
+            setProjects(current => current.map(item => item.id === updated.id ? updated : item));
+            setEditingProject(null);
+        } catch (error) {
+            console.error("Project update failed:", error);
+            setProjectsError("Could not update the project.");
+        } finally {
+            setSavingProject(false);
+        }
+    }
+
+    async function deleteProject(project: DashboardProject) {
+        if (!window.confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+            setProjectsError("Please sign in again.");
+            return;
+        }
+
+        setDeletingProjectId(project.id);
+        setProjectsError("");
+        try {
+            const response = await fetch(`http://127.0.0.1:8000/projects/${project.id}`, {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (response.status === 401) {
+                localStorage.removeItem("access_token");
+                window.location.reload();
+                return;
+            }
+            if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+            setProjects(current => current.filter(item => item.id !== project.id));
+            if (editingProject?.id === project.id) setEditingProject(null);
+        } catch (error) {
+            console.error("Project deletion failed:", error);
+            setProjectsError("Could not delete the project.");
+        } finally {
+            setDeletingProjectId(null);
+        }
+    }
 
     const [showProjectForm, setShowProjectForm] =
         useState(false);
@@ -260,7 +412,7 @@ export default function EngineeringWorkspace({
         if (
             workflow.action ===
             "create_project" &&
-            mode === "forge"
+            (mode === "forge" || mode === "projects")
         ) {
             setShowProjectForm(true);
             setCreatedProject(null);
@@ -399,6 +551,10 @@ export default function EngineeringWorkspace({
         });
     }
 
+    if (mode === "experiment") {
+        return <ExperimentsLab />;
+    }
+
     return (
         <motion.section
             className="engineering-workspace"
@@ -430,8 +586,80 @@ export default function EngineeringWorkspace({
                 <p>{content.description}</p>
             </div>
 
-            {showProjectForm &&
-                mode === "forge" ? (
+            {mode === "projects" && !showProjectForm ? (
+                <section className="project-dashboard">
+                    <div className="project-dashboard-toolbar">
+                        <div>
+                            <span className="project-dashboard-eyebrow">YOUR WORKSPACE</span>
+                            <h2>Saved projects <span>{projects.length}</span></h2>
+                            <p>Manage your engineering work from one place.</p>
+                        </div>
+                        <button type="button" className="project-primary-button" onClick={() => handleAction({ engine: null, action: "create_project", label: "Create new project" })}>
+                            + New project
+                        </button>
+                    </div>
+
+                    {projectsError && <p className="project-dashboard-error">{projectsError}</p>}
+
+                    {projectsLoading ? (
+                        <div className="project-dashboard-empty">Loading your projects...</div>
+                    ) : projects.length === 0 ? (
+                        <div className="project-dashboard-empty">
+                            <span>✦</span>
+                            <h3>No projects yet</h3>
+                            <p>Create your first project to start building with LATZ.</p>
+                            <button type="button" className="project-primary-button" onClick={() => handleAction({ engine: null, action: "create_project", label: "Create new project" })}>Create a project</button>
+                        </div>
+                    ) : (
+                        <div className="project-dashboard-grid">
+                            {projects.map(project => (
+                                <article className="project-dashboard-card" key={project.id}>
+                                    <div className="project-dashboard-card-top">
+                                        <span className="project-dashboard-icon">⌘</span>
+                                        <span className={`project-status status-${project.status.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>{project.status}</span>
+                                    </div>
+                                    <h3>{project.name}</h3>
+                                    <p className="project-dashboard-description">{project.description || "No description added yet."}</p>
+                                    <div className="project-dashboard-metadata">
+                                        <div><span>ENGINE</span><strong>{project.engine || "Not set"}</strong></div>
+                                        <div><span>TECH STACK</span><strong>{project.tech_stack || "Not specified"}</strong></div>
+                                        {project.updated_at && <div><span>UPDATED</span><strong>{new Date(project.updated_at).toLocaleDateString()}</strong></div>}
+                                    </div>
+                                    <div className="project-dashboard-actions">
+                                        <button type="button" className="project-secondary-button" onClick={() => startEditing(project)}>Edit</button>
+                                        <button type="button" className="project-primary-button" onClick={() => onAction({ engine: "forge", action: "design_architecture", label: `Continue building ${project.name}. Review the existing project and help me identify the next implementation step.`, projectId: project.id })}>Open with LATZ →</button>
+                                        <button type="button" className="project-delete-button" disabled={deletingProjectId === project.id} onClick={() => void deleteProject(project)}>{deletingProjectId === project.id ? "Deleting..." : "Delete"}</button>
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                    )}
+
+                    {editingProject && (
+                        <div className="project-edit-overlay" role="presentation">
+                            <section className="project-edit-modal" role="dialog" aria-modal="true" aria-labelledby="project-edit-title">
+                                <div className="project-form-header">
+                                    <span>PROJECT SETTINGS</span>
+                                    <h2 id="project-edit-title">Edit project</h2>
+                                    <p>Changes are saved to your account.</p>
+                                </div>
+                                <div className="project-form">
+                                    <label><span>Project name</span><input value={editForm.name} onChange={event => setEditForm(current => ({ ...current, name: event.target.value }))} /></label>
+                                    <label><span>Description</span><textarea rows={3} value={editForm.description} onChange={event => setEditForm(current => ({ ...current, description: event.target.value }))} /></label>
+                                    <label><span>Status</span><select value={editForm.status} onChange={event => setEditForm(current => ({ ...current, status: event.target.value }))}><option value="active">Active</option><option value="paused">Paused</option><option value="completed">Completed</option><option value="archived">Archived</option></select></label>
+                                    <label><span>Engine</span><select value={editForm.engine} onChange={event => setEditForm(current => ({ ...current, engine: event.target.value }))}><option value="">Not set</option><option value="forge">Forge</option><option value="learn">Learn</option><option value="research">Research</option><option value="explore">Explore</option><option value="solve">Solve</option></select></label>
+                                    <label><span>Technology stack</span><input value={editForm.tech_stack} onChange={event => setEditForm(current => ({ ...current, tech_stack: event.target.value }))} /></label>
+                                </div>
+                                {projectsError && <p className="project-dashboard-error">{projectsError}</p>}
+                                <div className="project-form-actions">
+                                    <button type="button" className="project-secondary-button" disabled={savingProject} onClick={() => setEditingProject(null)}>Cancel</button>
+                                    <button type="button" className="project-primary-button" disabled={savingProject} onClick={() => void saveProjectChanges()}>{savingProject ? "Saving..." : "Save changes"}</button>
+                                </div>
+                            </section>
+                        </div>
+                    )}
+                </section>
+            ) : showProjectForm ? (
                 <motion.div
                     className="project-creation-panel"
                     initial={{

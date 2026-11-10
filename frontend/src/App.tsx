@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import WorkspaceLayout from "./app/layouts/WorkspaceLayout";
 import Auth from "./features/auth/Auth";
@@ -14,9 +14,7 @@ function isTokenValid(): boolean {
   }
 
   try {
-    const payload = JSON.parse(
-      atob(token.split(".")[1]),
-    );
+    const payload = JSON.parse(atob(token.split(".")[1]));
 
     if (!payload.exp) {
       return false;
@@ -29,16 +27,12 @@ function isTokenValid(): boolean {
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] =
-    useState(isTokenValid());
-
-  const [onboardingRequired, setOnboardingRequired] =
-    useState(false);
-
-  const [checkingOnboarding, setCheckingOnboarding] =
-    useState(false);
+  const [authenticated, setAuthenticated] = useState(isTokenValid);
+  const [onboardingRequired, setOnboardingRequired] = useState(false);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(isTokenValid);
 
   const handleLogin = () => {
+    setCheckingOnboarding(true);
     setAuthenticated(true);
   };
 
@@ -46,60 +40,75 @@ export default function App() {
     localStorage.removeItem("access_token");
     setAuthenticated(false);
     setOnboardingRequired(false);
+    setCheckingOnboarding(false);
   };
 
-  const checkOnboarding = useCallback(async () => {
-    const token =
-      localStorage.getItem("access_token");
+  useEffect(() => {
+    if (!authenticated) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const token = localStorage.getItem("access_token");
 
     if (!token) {
       return;
     }
 
-    setCheckingOnboarding(true);
-
-    try {
-      const response = await fetch(
-        `${API_BASE}/users/profile`,
-        {
+    async function loadOnboarding() {
+      try {
+        const response = await fetch(`${API_BASE}/users/profile`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
-        },
-      );
+        });
 
-      if (response.status === 401) {
-        handleLogout();
-        return;
+        if (cancelled) {
+          return;
+        }
+
+        if (response.status === 401) {
+          localStorage.removeItem("access_token");
+          setAuthenticated(false);
+          setOnboardingRequired(false);
+          return;
+        }
+
+        if (response.status === 404) {
+          setOnboardingRequired(true);
+          return;
+        }
+
+        if (!response.ok) {
+          setOnboardingRequired(false);
+          return;
+        }
+
+        const profile = await response.json();
+
+        if (!cancelled) {
+          setOnboardingRequired(
+            profile.onboarding_completed !== "true",
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setOnboardingRequired(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingOnboarding(false);
+        }
       }
-
-      if (response.status === 404) {
-        setOnboardingRequired(true);
-        return;
-      }
-
-      if (!response.ok) {
-        setOnboardingRequired(false);
-        return;
-      }
-
-      const profile = await response.json();
-
-      setOnboardingRequired(
-        profile.onboarding_completed !== "true",
-      );
-    } catch {
-      setOnboardingRequired(false);
-    } finally {
-      setCheckingOnboarding(false);
     }
-  }, []);
 
-  useEffect(() => {
-    if (authenticated) {
-      checkOnboarding();
-    }
-  }, [authenticated, checkOnboarding]);
+    void loadOnboarding();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated]);
 
   if (!authenticated) {
     return <Auth onLogin={handleLogin} />;
@@ -132,9 +141,5 @@ export default function App() {
     );
   }
 
-  return (
-    <WorkspaceLayout
-      onLogout={handleLogout}
-    />
-  );
+  return <WorkspaceLayout onLogout={handleLogout} />;
 }

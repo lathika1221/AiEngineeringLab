@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./Chat.css";
@@ -33,6 +33,15 @@ type Conversation = {
     updated_at: string;
 };
 
+type SavedProject = {
+    id: number;
+    name: string;
+    description: string | null;
+    status: string;
+    engine: string | null;
+    tech_stack: string | null;
+};
+
 type MemoryCandidate = {
     memory_type: string;
     content: string;
@@ -43,6 +52,7 @@ type ChatProps = {
     onLogout?: () => void;
     initialWorkflow?: WorkspaceWorkflow | null;
     projectId?: number | null;
+    onOpenProject?: (project: SavedProject) => void;
 };
 
 const API_URL = "http://127.0.0.1:8000";
@@ -69,6 +79,7 @@ export default function Chat({
     onLogout,
     initialWorkflow,
     projectId = null,
+    onOpenProject,
 }: ChatProps) {
     const [messages, setMessages] = useState<Message[]>([
         INITIAL_MESSAGE,
@@ -81,6 +92,9 @@ export default function Chat({
     const [conversations, setConversations] = useState<Conversation[]>(
         [],
     );
+    const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+    const [projectsLoading, setProjectsLoading] = useState(true);
+    const [projectsError, setProjectsError] = useState("");
     const [activeConversationId, setActiveConversationId] =
         useState<number | null>(null);
     const [categoryFilter, setCategoryFilter] = useState<
@@ -103,7 +117,7 @@ export default function Chat({
             conversation.category === categoryFilter,
     );
 
-    function handleUnauthorized() {
+    const handleUnauthorized = useCallback(() => {
         localStorage.removeItem("access_token");
 
         if (onLogout) {
@@ -111,9 +125,9 @@ export default function Chat({
         } else {
             window.location.reload();
         }
-    }
+    }, [onLogout]);
 
-    async function refreshConversations(token: string) {
+    const refreshConversations = useCallback(async (token: string) => {
         const params = new URLSearchParams();
 
         if (projectId !== null && projectId !== undefined) {
@@ -145,11 +159,11 @@ export default function Chat({
         const data: Conversation[] = await response.json();
         setConversations(data);
         return data;
-    }
+    }, [handleUnauthorized, projectId]);
 
-    async function createConversation(
+    const createConversation = useCallback(async (
         token: string,
-    ): Promise<Conversation> {
+    ): Promise<Conversation> => {
         const category: ConversationCategory =
             categoryFilter === "all" ? "general" : categoryFilter;
 
@@ -193,12 +207,12 @@ export default function Chat({
         setSidebarError("");
 
         return conversation;
-    }
+    }, [handleUnauthorized, categoryFilter, projectId]);
 
-    async function checkMemoryCandidate(
+    const checkMemoryCandidate = useCallback(async (
         message: string,
         token: string,
-    ) {
+    ) => {
         try {
             const response = await fetch(
                 `${API_URL}/ai/memory-candidate`,
@@ -233,7 +247,7 @@ export default function Chat({
         } catch (error) {
             console.error("Memory candidate check failed:", error);
         }
-    }
+    }, [handleUnauthorized]);
 
     async function saveMemory() {
         if (!memoryCandidate) {
@@ -332,6 +346,58 @@ export default function Chat({
     useEffect(() => {
         let cancelled = false;
 
+        async function loadSavedProjects() {
+            setProjectsLoading(true);
+            setProjectsError("");
+
+            const token = localStorage.getItem("access_token");
+
+            if (!token) {
+                setProjectsLoading(false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/projects`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+
+                if (response.status === 401) {
+                    handleUnauthorized();
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Project list failed: ${response.status}`);
+                }
+
+                const data: SavedProject[] = await response.json();
+
+                if (!cancelled) {
+                    setSavedProjects(data);
+                }
+            } catch (error) {
+                console.error("Projects failed to load:", error);
+                if (!cancelled) {
+                    setProjectsError("Couldn't load saved projects.");
+                }
+            } finally {
+                if (!cancelled) {
+                    setProjectsLoading(false);
+                }
+            }
+        }
+
+        void loadSavedProjects();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [handleUnauthorized]);
+
+    useEffect(() => {
+        let cancelled = false;
+
         async function loadConversations() {
             setConversationsLoading(true);
             setHistoryLoading(true);
@@ -413,7 +479,7 @@ export default function Chat({
         return () => {
             cancelled = true;
         };
-    }, [projectId]);
+    }, [projectId, handleUnauthorized]);
 
     useEffect(() => {
         let cancelled = false;
@@ -512,20 +578,17 @@ export default function Chat({
         return () => {
             cancelled = true;
         };
-    }, [activeConversationId, projectId]);
+    }, [activeConversationId, projectId, handleUnauthorized]);
 
-    async function sendMessage(
+    const sendMessage = useCallback(async (
         messageOverride?: string,
         workflowOverride?: WorkspaceWorkflow | null,
-    ) {
+    ) => {
         const message = (messageOverride ?? input).trim();
 
-        if (!message || loading || historyLoading) {
-            return;
-        }
+        if (!message || loading || historyLoading) return;
 
         const token = localStorage.getItem("access_token");
-
         if (!token) {
             handleUnauthorized();
             return;
@@ -537,10 +600,7 @@ export default function Chat({
             { role: "assistant", content: "" },
         ]);
 
-        if (!messageOverride) {
-            setInput("");
-        }
-
+        if (!messageOverride) setInput("");
         setLoading(true);
         void checkMemoryCandidate(message, token);
 
@@ -553,57 +613,38 @@ export default function Chat({
             }
 
             const workflow = workflowOverride ?? activeWorkflow;
-
             const requestBody: {
                 message: string;
                 conversation_id: number;
                 engine?: string;
                 action?: string;
                 project_id?: number;
-            } = {
-                message,
-                conversation_id: conversationId,
-            };
+            } = { message, conversation_id: conversationId };
 
             if (projectId !== null && projectId !== undefined) {
                 requestBody.project_id = projectId;
             }
+            if (workflow?.engine) requestBody.engine = workflow.engine;
+            if (workflow?.action) requestBody.action = workflow.action;
 
-            if (workflow?.engine) {
-                requestBody.engine = workflow.engine;
-            }
-
-            if (workflow?.action) {
-                requestBody.action = workflow.action;
-            }
-
-            const response = await fetch(
-                `${API_URL}/ai/chat/stream`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`,
-                    },
-                    body: JSON.stringify(requestBody),
+            const response = await fetch(`${API_URL}/ai/chat/stream`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
                 },
-            );
+                body: JSON.stringify(requestBody),
+            });
 
             if (response.status === 401) {
                 handleUnauthorized();
                 return;
             }
-
             if (!response.ok) {
-                throw new Error(
-                    `Chat request failed: ${response.status}`,
-                );
+                throw new Error(`Chat request failed: ${response.status}`);
             }
-
             if (!response.body) {
-                throw new Error(
-                    "Streaming is not supported by this response.",
-                );
+                throw new Error("Streaming is not supported by this response.");
             }
 
             const reader = response.body.getReader();
@@ -612,15 +653,9 @@ export default function Chat({
 
             while (true) {
                 const { value, done } = await reader.read();
+                if (done) break;
 
-                if (done) {
-                    break;
-                }
-
-                accumulated += decoder.decode(value, {
-                    stream: true,
-                });
-
+                accumulated += decoder.decode(value, { stream: true });
                 setMessages((current) => {
                     const updated = [...current];
                     updated[updated.length - 1] = {
@@ -632,7 +667,6 @@ export default function Chat({
             }
 
             accumulated += decoder.decode();
-
             setMessages((current) => {
                 const updated = [...current];
                 updated[updated.length - 1] = {
@@ -645,7 +679,7 @@ export default function Chat({
             setConversations((current) =>
                 current.map((conversation) =>
                     conversation.id === conversationId &&
-                        conversation.title === "New Chat"
+                    conversation.title === "New Chat"
                         ? {
                             ...conversation,
                             title: message.slice(0, 60),
@@ -660,41 +694,53 @@ export default function Chat({
             );
         } catch (error) {
             console.error(error);
-
             setMessages((current) => {
                 const updated = [...current];
                 updated[updated.length - 1] = {
                     role: "assistant",
-                    content:
-                        "I couldn't complete the request. Check that the AEL backend is running and you're authenticated.",
+                    content: "I couldn't complete the request. Check that the AEL backend is running and you're authenticated.",
                 };
                 return updated;
             });
         } finally {
             setLoading(false);
         }
-    }
+    }, [
+        input,
+        loading,
+        historyLoading,
+        handleUnauthorized,
+        checkMemoryCandidate,
+        activeConversationId,
+        activeWorkflow,
+        projectId,
+        createConversation,
+        refreshConversations,
+    ]);
 
     useEffect(() => {
         if (
-            initialWorkflow &&
-            !workflowStarted &&
-            !historyLoading &&
-            !conversationsLoading
+            !initialWorkflow ||
+            workflowStarted ||
+            historyLoading ||
+            conversationsLoading
         ) {
+            return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
             setWorkflowStarted(true);
             setActiveWorkflow(null);
+            void sendMessage(initialWorkflow.label, initialWorkflow);
+        }, 0);
 
-            void sendMessage(
-                initialWorkflow.label,
-                initialWorkflow,
-            );
-        }
+        return () => window.clearTimeout(timeoutId);
     }, [
         initialWorkflow,
         workflowStarted,
         historyLoading,
         conversationsLoading,
+        sendMessage,
     ]);
 
     function handleKeyDown(
@@ -744,7 +790,35 @@ export default function Chat({
                 </div>
 
                 <div className="conversation-list">
-                    {conversationsLoading ? (
+                    {categoryFilter === "projects" ? (
+                        projectsLoading ? (
+                            <p className="conversation-empty">Loading projects...</p>
+                        ) : savedProjects.length === 0 ? (
+                            <p className="conversation-empty">No saved projects yet.</p>
+                        ) : (
+                            savedProjects.map((project) => (
+                                <button
+                                    type="button"
+                                    key={project.id}
+                                    className="conversation-item"
+                                    onClick={() => onOpenProject?.(project)}
+                                    disabled={loading}
+                                >
+                                    <span className="conversation-item-title">
+                                        {project.name}
+                                    </span>
+                                    <span className="conversation-item-meta">
+                                        {project.status}{project.engine ? ` · ${project.engine}` : ""}
+                                    </span>
+                                    {project.description && (
+                                        <span className="conversation-item-meta">
+                                            {project.description}
+                                        </span>
+                                    )}
+                                </button>
+                            ))
+                        )
+                    ) : conversationsLoading ? (
                         <p className="conversation-empty">
                             Loading conversations...
                         </p>
@@ -778,6 +852,9 @@ export default function Chat({
                         ))
                     )}
 
+                    {categoryFilter === "projects" && projectsError && (
+                        <p className="conversation-error">{projectsError}</p>
+                    )}
                     {sidebarError && (
                         <p className="conversation-error">
                             {sidebarError}

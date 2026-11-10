@@ -365,3 +365,159 @@ def test_chat_rejects_another_users_conversation(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Conversation not found"
+from src.api.routes import ai as ai_routes
+
+
+def test_stream_chat_saves_complete_response(client, test_db, monkeypatch):
+    db, user, _ = test_db
+    conversation = Conversation(
+        user_id=user.id,
+        title="Streaming test",
+        category="learning",
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    conversation_id = conversation.id
+
+    monkeypatch.setattr(ai_routes, "get_recent_chats", lambda **kwargs: [])
+    monkeypatch.setattr(ai_routes, "get_memories", lambda **kwargs: [])
+    monkeypatch.setattr(
+        ai_routes,
+        "build_request_context",
+        lambda **kwargs: {"current_project": None},
+    )
+
+    def fake_stream(**kwargs):
+        yield "Streaming "
+        yield "works!"
+
+    monkeypatch.setattr(ai_routes, "stream_chat_with_ai", fake_stream)
+
+    response = client.post(
+        "/ai/chat/stream",
+        json={
+            "message": "Test streaming",
+            "conversation_id": conversation_id,
+            "engine": "learn",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "Streaming works!"
+
+    from sqlalchemy.orm import Session
+
+    fresh_db = Session(bind=db.get_bind())
+    try:
+        saved_chat = fresh_db.query(Chat).filter(
+            Chat.conversation_id == conversation_id
+        ).one()
+
+        assert saved_chat.user_message == "Test streaming"
+        assert saved_chat.ai_response == "Streaming works!"
+    finally:
+        fresh_db.close()
+
+
+def test_stream_chat_does_not_save_partial_response_on_failure(client, test_db, monkeypatch):
+    db, user, _ = test_db
+    conversation = Conversation(
+        user_id=user.id,
+        title="Streaming failure test",
+        category="learning",
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    conversation_id = conversation.id
+
+    monkeypatch.setattr(ai_routes, "get_recent_chats", lambda **kwargs: [])
+    monkeypatch.setattr(ai_routes, "get_memories", lambda **kwargs: [])
+    monkeypatch.setattr(
+        ai_routes,
+        "build_request_context",
+        lambda **kwargs: {"current_project": None},
+    )
+
+    def failing_stream(**kwargs):
+        yield "Partial response "
+        raise RuntimeError("simulated stream failure")
+
+    monkeypatch.setattr(ai_routes, "stream_chat_with_ai", failing_stream)
+
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.post(
+            "/ai/chat/stream",
+            json={
+                "message": "Test failed streaming",
+                "conversation_id": conversation_id,
+                "engine": "learn",
+            },
+        )
+
+    from sqlalchemy.orm import Session
+
+    fresh_db = Session(bind=db.get_bind())
+    try:
+        saved_chats = fresh_db.query(Chat).filter(
+            Chat.conversation_id == conversation_id,
+            Chat.user_message == "Test failed streaming",
+        ).all()
+
+        assert saved_chats == []
+    finally:
+        fresh_db.close()
+
+def test_stream_chat_rolls_back_when_persistence_fails(
+    client, test_db, monkeypatch
+):
+    db, user, _ = test_db
+
+    conversation = Conversation(
+        user_id=user.id,
+        title="Persistence failure test",
+        category="learning",
+    )
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    rollback_calls = []
+    original_rollback = db.rollback
+
+    def tracked_rollback():
+        rollback_calls.append(True)
+        original_rollback()
+
+    monkeypatch.setattr(db, "rollback", tracked_rollback)
+
+    monkeypatch.setattr(ai_routes, "get_recent_chats", lambda **kwargs: [])
+    monkeypatch.setattr(ai_routes, "get_memories", lambda **kwargs: [])
+    monkeypatch.setattr(
+        ai_routes,
+        "build_request_context",
+        lambda **kwargs: {"current_project": None},
+    )
+
+    def fake_stream(**kwargs):
+        yield "Complete response"
+
+    def failing_save_chat(**kwargs):
+        raise RuntimeError("Simulated database failure")
+
+    monkeypatch.setattr(ai_routes, "stream_chat_with_ai", fake_stream)
+    monkeypatch.setattr(ai_routes, "save_chat", failing_save_chat)
+
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        response = test_client.post(
+            "/ai/chat/stream",
+            json={
+                "message": "Test persistence failure",
+                "conversation_id": conversation.id,
+                "engine": "learn",
+            },
+        )
+
+    assert response.status_code == 200
+    assert rollback_calls == [True]

@@ -103,6 +103,9 @@ def stream_chat(request: ChatRequest, db: Session = Depends(get_db), current_use
                 yield chunk
             complete_response = "".join(chunks)
             save_chat(db=db, user=current_user, user_message=request.message, ai_response=complete_response, project_id=effective_project_id, conversation_id=request.conversation_id)
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 

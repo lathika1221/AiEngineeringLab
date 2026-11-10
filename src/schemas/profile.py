@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ProfileBase(BaseModel):
@@ -20,5 +20,4 @@ class ProfileResponse(ProfileBase):
     user_id: int
     onboarding_completed: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

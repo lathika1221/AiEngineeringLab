@@ -78,3 +78,44 @@ def test_stream_chat_with_ai_yields_text_chunks(monkeypatch):
     assert result == ["Hello ", "from LATZ"]
     fake_client.chat.completions.create.assert_called_once()
     assert fake_client.chat.completions.create.call_args.kwargs["stream"] is True
+
+
+def _chunk(content=None, finish_reason=None):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=SimpleNamespace(content=content), finish_reason=finish_reason)]
+    )
+
+
+def _stream_with(monkeypatch, chunks):
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = chunks
+    monkeypatch.setattr(ai_service, "get_ai_client", lambda: fake_client)
+    monkeypatch.setattr(
+        ai_service, "get_relevant_context",
+        lambda **kwargs: {"memories": [], "life_roles": [], "goals": []},
+    )
+    monkeypatch.setattr(ai_service, "build_messages", lambda **kwargs: [{"role": "user", "content": "Hi"}])
+    return fake_client
+
+
+def test_stream_chat_with_ai_reports_length_finish_reason(monkeypatch):
+    _stream_with(monkeypatch, [_chunk("Section 6: Integration of "), _chunk(None, "length")])
+    outcome = {}
+
+    result = list(ai_service.stream_chat_with_ai(message="Hi", outcome=outcome))
+
+    assert result == ["Section 6: Integration of "]
+    assert outcome["finish_reason"] == "length"
+
+
+def test_stream_chat_with_ai_reports_stop_finish_reason(monkeypatch):
+    _stream_with(monkeypatch, [_chunk("Done."), _chunk(None, "stop")])
+    outcome = {}
+
+    list(ai_service.stream_chat_with_ai(message="Hi", outcome=outcome))
+
+    assert outcome["finish_reason"] == "stop"
+
+
+def test_output_token_limit_fits_a_seven_section_report():
+    assert ai_service.MAX_OUTPUT_TOKENS >= 2500

@@ -388,9 +388,10 @@ def test_stream_chat_saves_complete_response(client, test_db, monkeypatch):
         lambda **kwargs: {"current_project": None},
     )
 
-    def fake_stream(**kwargs):
+    def fake_stream(outcome=None, **kwargs):
         yield "Streaming "
         yield "works!"
+        outcome["finish_reason"] = "stop"
 
     monkeypatch.setattr(ai_routes, "stream_chat_with_ai", fake_stream)
 
@@ -404,7 +405,7 @@ def test_stream_chat_saves_complete_response(client, test_db, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.text == "Streaming works!"
+    assert response.text == f"Streaming works!{ai_routes.STREAM_END_MARKER}stop"
 
     from sqlalchemy.orm import Session
 
@@ -420,13 +421,8 @@ def test_stream_chat_saves_complete_response(client, test_db, monkeypatch):
         fresh_db.close()
 
 
-def test_stream_chat_does_not_save_partial_response_on_failure(client, test_db, monkeypatch):
-    db, user, _ = test_db
-    conversation = Conversation(
-        user_id=user.id,
-        title="Streaming failure test",
-        category="learning",
-    )
+def _run_stream(db, user, monkeypatch, fake_stream, message):
+    conversation = Conversation(user_id=user.id, title="Stream test", category="learning")
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
@@ -435,39 +431,111 @@ def test_stream_chat_does_not_save_partial_response_on_failure(client, test_db, 
     monkeypatch.setattr(ai_routes, "get_recent_chats", lambda **kwargs: [])
     monkeypatch.setattr(ai_routes, "get_memories", lambda **kwargs: [])
     monkeypatch.setattr(
-        ai_routes,
-        "build_request_context",
-        lambda **kwargs: {"current_project": None},
+        ai_routes, "build_request_context", lambda **kwargs: {"current_project": None}
     )
-
-    def failing_stream(**kwargs):
-        yield "Partial response "
-        raise RuntimeError("simulated stream failure")
-
-    monkeypatch.setattr(ai_routes, "stream_chat_with_ai", failing_stream)
+    monkeypatch.setattr(ai_routes, "stream_chat_with_ai", fake_stream)
 
     with TestClient(app, raise_server_exceptions=False) as test_client:
         response = test_client.post(
             "/ai/chat/stream",
-            json={
-                "message": "Test failed streaming",
-                "conversation_id": conversation_id,
-                "engine": "learn",
-            },
+            json={"message": message, "conversation_id": conversation_id, "engine": "learn"},
         )
 
     from sqlalchemy.orm import Session
 
     fresh_db = Session(bind=db.get_bind())
     try:
-        saved_chats = fresh_db.query(Chat).filter(
-            Chat.conversation_id == conversation_id,
-            Chat.user_message == "Test failed streaming",
-        ).all()
-
-        assert saved_chats == []
+        saved = fresh_db.query(Chat).filter(Chat.conversation_id == conversation_id).all()
+        return response, [chat.ai_response for chat in saved]
     finally:
         fresh_db.close()
+
+
+def test_stream_chat_preserves_partial_response_on_failure(client, test_db, monkeypatch):
+    db, user, _ = test_db
+
+    def failing_stream(**kwargs):
+        yield "Partial response "
+        raise RuntimeError("simulated stream failure")
+
+    response, saved = _run_stream(db, user, monkeypatch, failing_stream, "Test failed streaming")
+
+    assert response.status_code == 200
+    assert response.text == f"Partial response {ai_routes.STREAM_END_MARKER}error"
+    assert len(saved) == 1
+    assert saved[0].startswith("Partial response ")
+    assert "Response incomplete" in saved[0]
+    assert "simulated stream failure" not in response.text + saved[0]
+
+
+def test_stream_chat_failure_before_any_output_saves_nothing(client, test_db, monkeypatch):
+    db, user, _ = test_db
+
+    def failing_stream(**kwargs):
+        raise RuntimeError("provider down")
+        yield ""  # pragma: no cover
+
+    response, saved = _run_stream(db, user, monkeypatch, failing_stream, "Nothing arrives")
+
+    assert response.text == f"{ai_routes.STREAM_END_MARKER}error"
+    assert saved == []
+
+
+def test_stream_chat_marks_length_limited_response_incomplete(client, test_db, monkeypatch):
+    db, user, _ = test_db
+    long_text = "## Section 6\nIntegration of " + ("word " * 400)
+
+    def length_stream(outcome=None, **kwargs):
+        yield long_text
+        outcome["finish_reason"] = "length"
+
+    response, saved = _run_stream(db, user, monkeypatch, length_stream, "Seven sections please")
+
+    assert response.text == f"{long_text}{ai_routes.STREAM_END_MARKER}length"
+    assert len(saved) == 1
+    assert saved[0].startswith(long_text)
+    assert "output length limit" in saved[0]
+
+
+def test_stream_chat_without_finish_reason_is_incomplete(client, test_db, monkeypatch):
+    db, user, _ = test_db
+
+    def silent_stream(**kwargs):
+        yield "Ended without a finish reason"
+
+    response, saved = _run_stream(db, user, monkeypatch, silent_stream, "No finish reason")
+
+    assert response.text == f"Ended without a finish reason{ai_routes.STREAM_END_MARKER}incomplete"
+    assert len(saved) == 1
+    assert saved[0].startswith("Ended without a finish reason")
+    assert "may be incomplete" in saved[0]
+
+
+def test_stream_chat_unexpected_finish_reason_is_incomplete(client, test_db, monkeypatch):
+    db, user, _ = test_db
+
+    def odd_stream(outcome=None, **kwargs):
+        yield "Filtered reply"
+        outcome["finish_reason"] = "content_filter"
+
+    response, saved = _run_stream(db, user, monkeypatch, odd_stream, "Odd finish reason")
+
+    assert response.text.endswith(f"{ai_routes.STREAM_END_MARKER}incomplete")
+    assert "may be incomplete" in saved[0]
+
+
+def test_stream_chat_stop_finish_reason_is_complete_and_unannotated(client, test_db, monkeypatch):
+    db, user, _ = test_db
+
+    def stop_stream(outcome=None, **kwargs):
+        yield "All seven sections and a conclusion."
+        outcome["finish_reason"] = "stop"
+
+    response, saved = _run_stream(db, user, monkeypatch, stop_stream, "Complete reply")
+
+    assert response.text.endswith(f"{ai_routes.STREAM_END_MARKER}stop")
+    assert saved == ["All seven sections and a conclusion."]
+
 
 def test_stream_chat_rolls_back_when_persistence_fails(
     client, test_db, monkeypatch
@@ -500,8 +568,9 @@ def test_stream_chat_rolls_back_when_persistence_fails(
         lambda **kwargs: {"current_project": None},
     )
 
-    def fake_stream(**kwargs):
+    def fake_stream(outcome=None, **kwargs):
         yield "Complete response"
+        outcome["finish_reason"] = "stop"
 
     def failing_save_chat(**kwargs):
         raise RuntimeError("Simulated database failure")
@@ -521,3 +590,100 @@ def test_stream_chat_rolls_back_when_persistence_fails(
 
     assert response.status_code == 200
     assert rollback_calls == [True]
+
+
+def _make_conversation(db, user, title="Original title"):
+    conversation = Conversation(user_id=user.id, title=title, category="general")
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return conversation
+
+
+def test_rename_conversation(client, test_db):
+    db, user, _ = test_db
+    conversation = _make_conversation(db, user)
+
+    response = client.patch(f"/conversations/{conversation.id}", json={"title": "  Renamed  "})
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Renamed"
+    assert client.get(f"/conversations/{conversation.id}").json()["title"] == "Renamed"
+
+
+def test_rename_conversation_rejects_blank_and_overlong_titles(client, test_db):
+    db, user, _ = test_db
+    conversation = _make_conversation(db, user)
+
+    for title in ["", "   ", "x" * 201]:
+        response = client.patch(f"/conversations/{conversation.id}", json={"title": title})
+        assert response.status_code == 422
+
+    assert client.patch(f"/conversations/{conversation.id}", json={}).status_code == 422
+    assert client.get(f"/conversations/{conversation.id}").json()["title"] == "Original title"
+
+
+def test_rename_conversation_does_not_change_other_fields(client, test_db):
+    db, user, _ = test_db
+    conversation = _make_conversation(db, user)
+
+    data = client.patch(
+        f"/conversations/{conversation.id}",
+        json={"title": "New", "category": "research", "project_id": 99},
+    ).json()
+
+    assert data["category"] == "general"
+    assert data["project_id"] is None
+
+
+def test_rename_missing_or_foreign_conversation_returns_404(client, test_db):
+    db, _, other_user = test_db
+    foreign = _make_conversation(db, other_user, "Not yours")
+
+    assert client.patch("/conversations/9999", json={"title": "x"}).status_code == 404
+    assert client.patch(f"/conversations/{foreign.id}", json={"title": "Hijacked"}).status_code == 404
+    db.refresh(foreign)
+    assert foreign.title == "Not yours"
+
+
+def test_delete_conversation_removes_it_and_its_messages(client, test_db):
+    db, user, _ = test_db
+    conversation = _make_conversation(db, user)
+    kept = _make_conversation(db, user, "Other chat")
+    db.add_all([
+        Chat(user_id=user.id, conversation_id=conversation.id, user_message="q", ai_response="a"),
+        Chat(user_id=user.id, conversation_id=kept.id, user_message="q2", ai_response="a2"),
+    ])
+    db.commit()
+
+    response = client.delete(f"/conversations/{conversation.id}")
+
+    assert response.status_code == 204
+    assert client.get(f"/conversations/{conversation.id}").status_code == 404
+    remaining = db.query(Chat).all()
+    assert [chat.user_message for chat in remaining] == ["q2"]
+    assert client.get(f"/conversations/{kept.id}").status_code == 200
+
+
+def test_delete_missing_or_foreign_conversation_returns_404(client, test_db):
+    db, _, other_user = test_db
+    foreign = _make_conversation(db, other_user, "Not yours")
+    db.add(Chat(user_id=other_user.id, conversation_id=foreign.id, user_message="q", ai_response="a"))
+    db.commit()
+
+    assert client.delete("/conversations/9999").status_code == 404
+    assert client.delete(f"/conversations/{foreign.id}").status_code == 404
+    assert db.query(Conversation).filter(Conversation.id == foreign.id).count() == 1
+    assert db.query(Chat).filter(Chat.conversation_id == foreign.id).count() == 1
+
+
+def test_delete_conversation_keeps_its_project(client, test_db):
+    db, user, _ = test_db
+    project = client.post("/projects", json={"name": "Keep me"}).json()
+    conversation = client.post(
+        "/conversations", json={"title": "In project", "project_id": project["id"]}
+    ).json()
+
+    assert client.delete(f"/conversations/{conversation['id']}").status_code == 204
+    assert client.get(f"/projects/{project['id']}").status_code == 200
+    assert client.get(f"/conversations?project_id={project['id']}").json() == []

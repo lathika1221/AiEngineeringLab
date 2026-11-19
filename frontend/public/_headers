@@ -1,0 +1,8 @@
+# Cloudflare Pages response headers (applied to every route).
+# No Content-Security-Policy yet: the app loads Google Fonts and an inline theme
+# script, so a CSP needs hashes or a self-hosted font first (documented in docs/DEPLOYMENT.md).
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

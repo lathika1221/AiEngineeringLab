@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.ai.provider import get_ai_client
+from src.ai.usage import note_prompt, prompt_chars, provider_total_tokens
 from src.config.settings import settings
 from src.services.tool_calling_service import run_tool_calling
 
@@ -21,7 +22,7 @@ from src.services.engine_service import (
 MAX_HISTORY_MESSAGES = 4
 MAX_USER_CHARS = 1500
 MAX_ASSISTANT_CHARS = 3000
-MAX_OUTPUT_TOKENS = 1200
+MAX_OUTPUT_TOKENS = 2500
 MAX_MEMORIES = 8
 MAX_MEMORY_CHARS = 500
 MAX_GOALS = 8
@@ -664,6 +665,8 @@ def chat_with_ai(
 
     print("================")
 
+    note_prompt(messages)
+
     return run_tool_calling(
         client=get_ai_client(),
         messages=messages,
@@ -677,7 +680,11 @@ def stream_chat_with_ai(
     context: dict = None,
     engine: str | None = None,
     action: str | None = None,
+    outcome: dict | None = None,
 ):
+    """Stream reply text. If `outcome` is given, the provider's finish_reason
+    ("stop", "length", ...) is stored in outcome["finish_reason"] so callers can
+    tell a complete reply from one cut off by the output limit."""
     relevant_context = (
         get_relevant_context(
             message=message,
@@ -755,6 +762,9 @@ def stream_chat_with_ai(
         action=action,
     )
 
+    if outcome is not None:
+        outcome["prompt_chars"] = prompt_chars(messages)
+
     stream = (
         get_ai_client().chat.completions.create(
             model=settings.MODEL_NAME,
@@ -765,12 +775,14 @@ def stream_chat_with_ai(
     )
 
     for chunk in stream:
-        if (
-            chunk.choices
-            and chunk.choices[0]
-            .delta.content
-        ):
-            yield (
-                chunk.choices[0]
-                .delta.content
-            )
+        if outcome is not None:
+            reported = provider_total_tokens(chunk)
+            if reported is not None:
+                outcome["provider_tokens"] = reported
+        if not chunk.choices:
+            continue
+        finish_reason = getattr(chunk.choices[0], "finish_reason", None)
+        if finish_reason and outcome is not None:
+            outcome["finish_reason"] = finish_reason
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content

@@ -28,3 +28,38 @@ dist/
 
 # Windows
 Thumbs.db
+
+# Environment files: everything except the committed template (kept visible on purpose)
+.env.*
+!.env.example
+
+# Other virtual environment names
+venv/
+env/
+
+# Python coverage and tooling caches
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Local databases
+*.sqlite3
+*.db
+
+# Private key material
+*.pem
+*.key
+*.p12
+
+# Dependencies (root and nested)
+node_modules/
+
+# Logs and build metadata
+*.log
+*.tsbuildinfo
+
+# Editor and tooling directories
+.idea/
+.wrangler/

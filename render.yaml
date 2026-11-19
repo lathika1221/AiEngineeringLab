@@ -1,0 +1,53 @@
+# Render Blueprint for the LATZ backend (one web service, no database: Neon hosts PostgreSQL).
+# Nothing here creates resources until you connect this repository in the Render dashboard.
+# Variables with `sync: false` are asked for in the dashboard and are never stored in Git.
+# Full variable reference: docs/ENVIRONMENT.md. Step-by-step: docs/DEPLOYMENT.md.
+# No pull-request previews or preview environments (each would be an extra instance).
+previews:
+  generation: "off"
+services:
+  - type: web
+    name: latz-api
+    runtime: python
+    plan: starter            # always on; the free plan sleeps after 15 idle minutes
+    region: singapore        # keep it the same region as the Neon project
+    autoDeployTrigger: "off"  # deploy manually so every release is deliberate
+    buildCommand: pip install -r requirements.txt
+    # Applies migrations before the new version starts. Needs the full set of
+    # variables below (the Alembic environment loads the backend settings).
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: PROJECT_NAME
+        value: LATZ API
+      - key: VERSION
+        value: "1.0.0"
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: REGISTRATION_ENABLED
+        value: "false"       # demo account is created with scripts/seed_demo_user.py
+      # AI starts OFF: /ai/chat and /ai/chat/stream return 503 until this is changed
+      # to "true" in a reviewed commit (see docs/DEPLOYMENT.md, "Enabling AI").
+      - key: AI_ENABLED
+        value: "false"
+      - key: ENABLE_DOCS     # explicit: /docs, /redoc and /openapi.json stay off in production
+        value: "false"
+      - key: AI_PROVIDER
+        value: groq          # the only planned provider; no paid fallback exists
+      - key: DATABASE_URL    # Neon connection string, must end with ?sslmode=require
+        sync: false
+      - key: SECRET_KEY      # 32+ random characters, unique to production
+        sync: false
+      - key: GROQ_API_KEY    # required only once AI_ENABLED is true
+        sync: false
+      - key: MODEL_NAME      # a model your Groq account offers
+        sync: false
+      - key: CORS_ORIGINS    # https frontend origin(s), comma separated, no trailing path
+        sync: false

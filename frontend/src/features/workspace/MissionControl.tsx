@@ -1,16 +1,14 @@
 import "./MissionControl.css";
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { Link, useNavigate } from "react-router-dom";
+import { FlaskConical, MessagesSquare, Plus } from "lucide-react";
+import { useSession } from "../../app/session/context";
+import { useApiResource } from "../../shared/api/resources";
+import type { Resource } from "../../shared/api/resources";
+import WolfHead from "../../shared/brand/WolfHead";
 import EngineeringCompass from "../../shared/components/EngineeringCompass";
-import type { WorkspaceAction } from "../../app/layouts/WorkspaceLayout";
-
-type MissionControlProps = {
-    onAskLatz: () => void;
-    workspaceAction: WorkspaceAction;
-    onWorkspaceAction: (
-        action: WorkspaceAction,
-    ) => void;
-};
+import { usePageTitle } from "../../shared/hooks/usePageTitle";
+import Button from "../../shared/ui/Button";
+import Notice from "../../shared/ui/Notice";
 
 type UserContext = {
     profile: {
@@ -41,412 +39,286 @@ type UserContext = {
     }>;
 };
 
-type MissionStat = {
-    label: string;
-    value: string;
-    detail: string;
+type ProjectSummary = {
+    id: number;
+    name: string;
+    description: string | null;
+    status: string;
+    engine: string | null;
 };
 
-const quickActions: Array<{
+type ConversationSummary = {
+    id: number;
     title: string;
-    description: string;
-    action: string;
-    target: WorkspaceAction | "chat";
-}> = [
+    category: string;
+    updated_at: string;
+};
+
+type Loadable<T> = { state: "loading" } | { state: "error" } | { state: "ready"; data: T };
+
+const RECENT_LIMIT = 5;
+
+function toLoadable<T>(resource: Resource<T>): Loadable<T> {
+    if (resource.data !== undefined) {
+        return { state: "ready", data: resource.data };
+    }
+
+    return resource.error ? { state: "error" } : { state: "loading" };
+}
+
+function formatDay(value: string): string {
+    const date = new Date(value);
+
+    return Number.isNaN(date.getTime())
+        ? ""
+        : date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function statusTag(status: string): string {
+    const known = ["active", "paused", "completed"];
+    const normalized = status.toLowerCase();
+
+    return known.includes(normalized) ? `tag tag--${normalized}` : "tag";
+}
+
+export default function MissionControl() {
+    const { displayName } = useSession();
+    const navigate = useNavigate();
+
+    usePageTitle("Mission Control");
+
+    // Shared with chat and the project list, so moving between screens does not refetch.
+    const context = toLoadable(useApiResource<UserContext>("/users/context"));
+    const projects = toLoadable(useApiResource<ProjectSummary[]>("/projects"));
+    const conversations = toLoadable(useApiResource<ConversationSummary[]>("/conversations"));
+
+    const contextData = context.state === "ready" ? context.data : null;
+    const roles = contextData?.life_roles ?? [];
+    const openGoals = (contextData?.goals ?? []).filter((goal) => goal.status !== "completed");
+
+    function count<T>(source: Loadable<T>, value: (data: T) => number): string {
+        return source.state === "ready" ? String(value(source.data)) : "—";
+    }
+
+    const stats = [
         {
-            title: "New Project",
-            description:
-                "Start building a new AI engineering project.",
-            action: "Create",
-            target: "forge",
+            label: "Projects",
+            to: "/projects",
+            value: count(projects, (data) => data.length),
+            detail: "Saved in your workspace",
         },
         {
-            title: "New Experiment",
-            description:
-                "Run an experiment with models, prompts or data.",
-            action: "Launch",
-            target: "experiment",
+            label: "Conversations",
+            to: "/chat",
+            value: count(conversations, (data) => data.length),
+            detail: "Chats with LATZ",
         },
         {
-            title: "Open Project",
-            description:
-                "Continue working on an existing engineering project.",
-            action: "Open",
-            target: "projects",
-        },
-        {
-            title: "Ask LATZ",
-            description:
-                "Get help reasoning through an engineering problem.",
-            action: "Chat",
-            target: "chat",
-        },
-    ];
-
-export default function MissionControl({
-    onAskLatz,
-    workspaceAction,
-    onWorkspaceAction,
-}: MissionControlProps) {
-    const [context, setContext] =
-        useState<UserContext | null>(null);
-
-    const [loadingContext, setLoadingContext] =
-        useState(() => Boolean(localStorage.getItem("access_token")));
-
-    const [contextError, setContextError] =
-        useState(() => !localStorage.getItem("access_token"));
-
-    useEffect(() => {
-        const accessToken =
-            localStorage.getItem("access_token");
-
-        if (!accessToken) {
-            return;
-        }
-
-        async function loadContext() {
-            try {
-                const response = await fetch(
-                    "http://127.0.0.1:8000/users/context",
-                    {
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                        },
-                    },
-                );
-
-                if (!response.ok) {
-                    throw new Error(
-                        "Failed to load user context",
-                    );
-                }
-
-                const data =
-                    (await response.json()) as UserContext;
-
-                setContext(data);
-            } catch (error) {
-                console.error(
-                    "Mission Control context error:",
-                    error,
-                );
-
-                setContextError(true);
-            } finally {
-                setLoadingContext(false);
-            }
-        }
-
-        loadContext();
-    }, []);
-
-    const stats: MissionStat[] = [
-        {
-            label: "Life Roles",
-            value: loadingContext
-                ? "—"
-                : String(
-                    context?.life_roles?.length ?? 0,
-                ),
-            detail: "Active identities",
-        },
-        {
-            label: "Active Goals",
-            value: loadingContext
-                ? "—"
-                : String(
-                    context?.goals?.filter(
-                        (goal) =>
-                            goal.status !==
-                            "completed",
-                    ).length ?? 0,
-                ),
-            detail: "Current objectives",
+            label: "Open goals",
+            to: "/goals",
+            value: count(context, (data) => (data.goals ?? []).filter((goal) => goal.status !== "completed").length),
+            detail: "Objectives in progress",
         },
         {
             label: "Memories",
-            value: loadingContext
-                ? "—"
-                : String(
-                    context?.memories?.length ?? 0,
-                ),
-            detail: "Saved context",
+            to: "/memories",
+            value: count(context, (data) => (data.memories ?? []).length),
+            detail: "Facts LATZ keeps about you",
         },
     ];
 
-    const actionTitle: Record<
-        WorkspaceAction,
-        string
-    > = {
-        forge: "Forge",
-        learn: "Learn",
-        research: "Research",
-        explore: "Explore",
-        solve: "Solve",
-        projects: "Projects",
-        experiment: "Experiment",
-    };
-
-    const actionDescription: Record<
-        WorkspaceAction,
-        string
-    > = {
-        forge:
-            "Build software, APIs and AI agents.",
-        learn:
-            "Understand concepts and build new skills.",
-        research:
-            "Investigate problems, papers and experiments.",
-        explore:
-            "Explore ideas, technologies and possibilities.",
-        solve:
-            "Break down problems and engineer practical solutions.",
-        projects:
-            "Continue working on your engineering projects.",
-        experiment:
-            "Run experiments with models, prompts or data.",
-    };
-
-    function handleQuickAction(
-        target: WorkspaceAction | "chat",
-    ) {
-        if (target === "chat") {
-            onAskLatz();
-            return;
-        }
-
-        onWorkspaceAction(target);
-    }
+    const loading =
+        context.state === "loading" || projects.state === "loading" || conversations.state === "loading";
 
     return (
-        <motion.section
-            className="mission-control"
-            initial={{
-                opacity: 0,
-                y: 24,
-            }}
-            animate={{
-                opacity: 1,
-                y: 0,
-            }}
-            transition={{
-                duration: 0.6,
-            }}
-        >
-            <div className="mission-hero">
-                <div className="mission-hero-copy">
-                    <span className="mission-eyebrow">
-                        AI ENGINEERING LAB
-                    </span>
+        <section className="page mission-control">
+            <div className="mission-hero panel panel--lit">
+                <div className="mission-hero__copy">
+                    <p className="label">Mission Control</p>
+                    <h1 className="display mission-hero__title">Welcome back, {displayName}</h1>
 
-                    <h1>
-                        Engineer.
-                        <span>
-                            {" "}
-                            Experiment.{" "}
-                        </span>
-                        Evolve.
-                    </h1>
+                    {roles.length > 0 ? (
+                        <ul className="mission-roles" aria-label="Your roles">
+                            {roles.map((role) => (
+                                <li className="tag" key={role.id}>
+                                    {role.role}
+                                </li>
+                            ))}
+                        </ul>
+                    ) : (
+                        <p className="mission-hero__lede">
+                            Pick up a project, start a conversation, or choose an engineering mode.
+                        </p>
+                    )}
 
-                    <p>
-                        A workspace for building
-                        intelligent systems,
-                        experimenting with AI, and
-                        turning ideas into working
-                        engineering projects.
-                    </p>
-
-                    <div className="mission-actions">
-                        <button
-                            className="primary-action"
-                            onClick={() =>
-                                onWorkspaceAction(
-                                    "forge",
-                                )
-                            }
-                        >
-                            Start Building
-                        </button>
-
-                        <button
-                            className="secondary-action"
-                            onClick={() =>
-                                onWorkspaceAction(
-                                    "projects",
-                                )
-                            }
-                        >
-                            View Projects
-                        </button>
+                    <div className="mission-hero__actions">
+                        <Button variant="primary" onClick={() => navigate("/forge")}>
+                            <Plus size={15} aria-hidden="true" />
+                            New project
+                        </Button>
+                        <Button onClick={() => navigate("/chat")}>
+                            <MessagesSquare size={15} aria-hidden="true" />
+                            Ask LATZ
+                        </Button>
+                        <Button onClick={() => navigate("/experiments")}>
+                            <FlaskConical size={15} aria-hidden="true" />
+                            New experiment
+                        </Button>
                     </div>
                 </div>
 
-                <motion.div
-                    className="mission-wolf"
-                    animate={{
-                        y: [0, -8, 0],
-                    }}
-                    transition={{
-                        duration: 4,
-                        repeat: Infinity,
-                        ease: "easeInOut",
-                    }}
-                >
-                    🐺
-                </motion.div>
+                <div className="mission-hero__wolf" aria-hidden="true">
+                    <span className="mission-hero__ring" />
+                    <WolfHead size={148} halo depth mood={loading ? "thinking" : "idle"} />
+                </div>
             </div>
 
-            <div className="mission-stats">
-                {stats.map((stat) => (
-                    <div
-                        className="stat-card"
-                        key={stat.label}
-                    >
-                        <span>
-                            {stat.label}
-                        </span>
-
-                        <strong>
-                            {stat.value}
-                        </strong>
-
-                        <small>
-                            {stat.detail}
-                        </small>
-                    </div>
-                ))}
-            </div>
-
-            {contextError && (
-                <div
-                    className="mission-context-status"
-                    role="status"
-                >
-                    LATZ couldn't load your latest
-                    workspace context.
+            {context.state === "error" && (
+                <div className="mission-notice">
+                    <Notice tone="error">
+                        LATZ couldn't load your workspace context. Check that the backend is running.
+                    </Notice>
                 </div>
             )}
 
-            <div className="mission-section">
-                <div className="section-heading">
-                    <div>
-                        <span>
-                            ENGINEERING MODES
-                        </span>
+            <dl className="mission-stats">
+                {stats.map((stat) => (
+                    <div className="mission-stat" key={stat.label}>
+                        <dt>
+                            <Link className="mission-stat__link" to={stat.to}>
+                                {stat.label}
+                            </Link>
+                        </dt>
+                        <dd>{stat.value}</dd>
+                        <dd className="mission-stat__detail">{stat.detail}</dd>
+                    </div>
+                ))}
+            </dl>
 
-                        <h2>
-                            What are we
-                            engineering today?
+            <div className="mission-columns">
+                <section className="section" aria-labelledby="mission-projects">
+                    <div className="section-head">
+                        <h2 className="section-title" id="mission-projects">
+                            Projects
                         </h2>
+                        <Button variant="ghost" size="sm" onClick={() => navigate("/projects")}>
+                            View all
+                        </Button>
                     </div>
 
-                    <p>
-                        Choose a direction and let the
-                        workspace adapt.
-                    </p>
-                </div>
-
-                <div className="mission-mode-state">
-                    <span>
-                        CURRENT MODE
-                    </span>
-
-                    <strong>
-                        {actionTitle[
-                            workspaceAction
-                        ]}
-                    </strong>
-
-                    <p>
-                        {
-                            actionDescription[
-                            workspaceAction
-                            ]
-                        }
-                    </p>
-                </div>
-
-                <EngineeringCompass
-                    selectedMode={
-                        workspaceAction
-                    }
-                    onSelectMode={
-                        onWorkspaceAction
-                    }
-                />
-            </div>
-
-            <div className="mission-section">
-                <div className="section-heading">
-                    <div>
-                        <span>
-                            QUICK START
-                        </span>
-
-                        <h2>
-                            Start with an
-                            engineering path
-                        </h2>
-                    </div>
-                </div>
-
-                <div className="quick-grid">
-                    {quickActions.map(
-                        (action, index) => (
-                            <motion.button
-                                key={action.title}
-                                className="quick-card"
-                                onClick={() =>
-                                    handleQuickAction(
-                                        action.target,
-                                    )
-                                }
-                                whileHover={{
-                                    y: -5,
-                                    scale: 1.01,
-                                }}
-                                whileTap={{
-                                    scale: 0.98,
-                                }}
-                                transition={{
-                                    duration: 0.2,
-                                }}
-                            >
-                                <div className="quick-card-top">
-                                    <span className="quick-number">
-                                        0{index + 1}
-                                    </span>
-
-                                    <span className="quick-action">
-                                        {
-                                            action.action
-                                        }
-                                    </span>
-                                </div>
-
-                                <div className="quick-card-content">
-                                    <h3>
-                                        {
-                                            action.title
-                                        }
-                                    </h3>
-
-                                    <p>
-                                        {
-                                            action.description
-                                        }
-                                    </p>
-                                </div>
-
-                                <span className="quick-arrow">
-                                    →
-                                </span>
-                            </motion.button>
-                        ),
+                    {projects.state === "loading" ? (
+                        <div className="mission-list mission-list--loading" aria-busy="true" />
+                    ) : projects.state === "error" ? (
+                        <Notice tone="error">Couldn't load your projects.</Notice>
+                    ) : projects.data.length === 0 ? (
+                        <div className="empty">
+                            <h3>No projects yet</h3>
+                            <p>Create a project so LATZ can keep its context between conversations.</p>
+                            <Button variant="primary" size="sm" onClick={() => navigate("/forge")}>
+                                Create a project
+                            </Button>
+                        </div>
+                    ) : (
+                        <ul className="mission-list">
+                            {projects.data.slice(0, RECENT_LIMIT).map((project) => (
+                                <li key={project.id}>
+                                    <Link
+                                        className="mission-row"
+                                        to={`/chat?project=${project.id}`}
+                                        title={`Open ${project.name} in chat`}
+                                    >
+                                        <span className="mission-row__main">
+                                            <strong>{project.name}</strong>
+                                            <small>{project.description || "No description yet"}</small>
+                                        </span>
+                                        <span className={statusTag(project.status)}>{project.status}</span>
+                                    </Link>
+                                </li>
+                            ))}
+                        </ul>
                     )}
-                </div>
+                </section>
+
+                <section className="section" aria-labelledby="mission-conversations">
+                    <div className="section-head">
+                        <h2 className="section-title" id="mission-conversations">
+                            Recent conversations
+                        </h2>
+                        <Button variant="ghost" size="sm" onClick={() => navigate("/chat")}>
+                            Open chat
+                        </Button>
+                    </div>
+
+                    {conversations.state === "loading" ? (
+                        <div className="mission-list mission-list--loading" aria-busy="true" />
+                    ) : conversations.state === "error" ? (
+                        <Notice tone="error">Couldn't load your conversations.</Notice>
+                    ) : conversations.data.length === 0 ? (
+                        <div className="empty">
+                            <h3>No conversations yet</h3>
+                            <p>Ask LATZ about something you're building, debugging or trying to understand.</p>
+                            <Button variant="primary" size="sm" onClick={() => navigate("/chat")}>
+                                Start a conversation
+                            </Button>
+                        </div>
+                    ) : (
+                        <ul className="mission-list">
+                            {conversations.data.slice(0, RECENT_LIMIT).map((conversation) => (
+                                <li key={conversation.id}>
+                                    <Link className="mission-row" to={`/chat/${conversation.id}`}>
+                                        <span className="mission-row__main">
+                                            <strong>{conversation.title || "New Chat"}</strong>
+                                            <small>{conversation.category}</small>
+                                        </span>
+                                        <time className="mission-row__time" dateTime={conversation.updated_at}>
+                                            {formatDay(conversation.updated_at)}
+                                        </time>
+                                    </Link>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </section>
             </div>
-        </motion.section>
+
+            {openGoals.length > 0 && (
+                <section className="section" aria-labelledby="mission-goals">
+                    <div className="section-head">
+                        <h2 className="section-title" id="mission-goals">
+                            Open goals
+                        </h2>
+                        <Button variant="ghost" size="sm" onClick={() => navigate("/goals")}>
+                            View all
+                        </Button>
+                    </div>
+                    <ul className="mission-list">
+                        {openGoals.slice(0, RECENT_LIMIT).map((goal) => (
+                            <li className="mission-row mission-row--static" key={goal.id}>
+                                <span className="mission-row__main">
+                                    <strong>{goal.title}</strong>
+                                    {goal.description && <small>{goal.description}</small>}
+                                </span>
+                                {goal.target_date && (
+                                    <time className="mission-row__time" dateTime={goal.target_date}>
+                                        Due {formatDay(goal.target_date)}
+                                    </time>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                </section>
+            )}
+
+            <section className="section" aria-labelledby="mission-modes">
+                <div className="section-head">
+                    <h2 className="section-title" id="mission-modes">
+                        Engineering modes
+                    </h2>
+                    <p className="section-note">Choose the kind of work. LATZ adapts to it.</p>
+                </div>
+
+                <EngineeringCompass />
+            </section>
+        </section>
     );
 }

@@ -8,6 +8,10 @@ class ConversationCreate(BaseModel):
     project_id: int | None = None
 
 
+class ConversationUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ConversationRead(BaseModel):
     id: int
     title: str

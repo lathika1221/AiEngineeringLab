@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordRequestForm
 
+from src.api.feature_flags import require_registration_enabled
 from src.database.session import get_db
 from src.schemas.user import UserCreate, UserResponse
 from src.schemas.login import Token
+from src.security.rate_limit import limit_login, limit_register
 from src.services.auth_service import create_user, login_user
 
 
@@ -17,6 +19,7 @@ router = APIRouter(
 @router.post(
     "/register",
     response_model=UserResponse,
+    dependencies=[Depends(require_registration_enabled), Depends(limit_register)],
 )
 def register(
     user: UserCreate,
@@ -39,6 +42,8 @@ def register(
 @router.post(
     "/login",
     response_model=Token,
+    # Rate limit first: it runs before any account lookup or password hashing.
+    dependencies=[Depends(limit_login)],
 )
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),

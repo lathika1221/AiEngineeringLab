@@ -1,9 +1,17 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { ArrowDown, ArrowUp, Beaker, Check, CircleAlert, FlaskConical, LoaderCircle, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import { incompleteReason, splitStreamEnd, type StreamEnd } from "../../shared/api/streamEnd";
+import { Link } from "react-router-dom";
+import { usePageTitle } from "../../shared/hooks/usePageTitle";
+import { ArrowLeft, Beaker, Copy, FlaskConical, Play, Sparkles, Square } from "lucide-react";
+import { API_BASE, getToken } from "../../shared/api/client";
+import WolfHead from "../../shared/brand/WolfHead";
+import { useNotify } from "../../shared/notifications/context";
+import Button from "../../shared/ui/Button";
+import Markdown from "../../shared/markdown/Markdown";
+import Notice from "../../shared/ui/Notice";
 import "./ExperimentsLab.css";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = API_BASE;
 
 const experiments = [
     { id: "prompt", number: "01", title: "Prompt playground", description: "Explore instructions, tone, and output quality.", engine: "explore", action: "prompt_experiment", icon: Sparkles, color: "violet", prompt: "Compare two approaches to solving this problem. Explain the trade-offs and recommend the strongest approach:" },
@@ -11,23 +19,72 @@ const experiments = [
     { id: "build", number: "03", title: "Architecture explorer", description: "Prototype and evaluate engineering decisions.", engine: "forge", action: "architecture_experiment", icon: Beaker, color: "cyan", prompt: "Propose an architecture for this engineering problem. Explain the components, data flow, trade-offs, and implementation plan:" },
 ];
 
+type Run = {
+    id: number;
+    experimentId: string;
+    title: string;
+    prompt: string;
+    output: string;
+    incomplete?: StreamEnd;
+    /** True when the user stopped the run on purpose. */
+    stopped?: boolean;
+    finishedAt: Date;
+};
+
+const HISTORY_LIMIT = 10;
+
 export default function ExperimentsLab() {
     const [selected, setSelected] = useState(experiments[0]);
     const [prompt, setPrompt] = useState(experiments[0].prompt);
     const [result, setResult] = useState("");
     const [running, setRunning] = useState(false);
     const [error, setError] = useState("");
-    const [runs, setRuns] = useState(0);
+    const [incomplete, setIncomplete] = useState<StreamEnd | null>(null);
+    const [stopped, setStopped] = useState(false);
+    const [history, setHistory] = useState<Run[]>([]);
+    const [viewingRun, setViewingRun] = useState<number | null>(null);
+    const nextRunId = useRef(1);
+    const controller = useRef<AbortController | null>(null);
+    const notify = useNotify();
+    usePageTitle("Experiments");
 
     function chooseExperiment(experiment: typeof experiments[number]) {
         setSelected(experiment);
         setPrompt(experiment.prompt);
         setResult("");
         setError("");
+        setIncomplete(null);
+        setStopped(false);
+        setViewingRun(null);
+    }
+
+    function openRun(run: Run) {
+        const experiment = experiments.find((item) => item.id === run.experimentId) ?? selected;
+
+        setSelected(experiment);
+        setPrompt(run.prompt);
+        setResult(run.output);
+        setError("");
+        setIncomplete(run.incomplete ?? null);
+        setStopped(run.stopped ?? false);
+        setViewingRun(run.id);
+    }
+
+    async function copyOutput() {
+        try {
+            await navigator.clipboard.writeText(result);
+            notify({ mood: "success", title: "Output copied" });
+        } catch {
+            notify({ mood: "error", title: "Couldn't copy", detail: "Select the text and copy it manually." });
+        }
+    }
+
+    function stopExperiment() {
+        controller.current?.abort();
     }
 
     async function runExperiment() {
-        const token = localStorage.getItem("access_token");
+        const token = getToken();
         if (!token) {
             setError("Your session has expired. Sign in again to run an experiment.");
             return;
@@ -40,6 +97,14 @@ export default function ExperimentsLab() {
         setRunning(true);
         setResult("");
         setError("");
+        setIncomplete(null);
+        setStopped(false);
+        setViewingRun(null);
+
+        const abort = new AbortController();
+        controller.current = abort;
+        let output = "";
+        let raw = "";
 
         try {
             const response = await fetch(`${API_URL}/ai/chat/stream`, {
@@ -54,6 +119,7 @@ export default function ExperimentsLab() {
                     engine: selected.engine,
                     action: selected.action,
                 }),
+                signal: abort.signal,
             });
 
             if (response.status === 401) {
@@ -68,101 +134,241 @@ export default function ExperimentsLab() {
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let output = "";
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                output += decoder.decode(value, { stream: true });
+                raw += decoder.decode(value, { stream: true });
+                output = splitStreamEnd(raw).text;
                 setResult(output);
             }
 
-            output += decoder.decode();
+            raw += decoder.decode();
+            const finished = splitStreamEnd(raw);
+            output = finished.text;
             setResult(output);
-            setRuns((count) => count + 1);
-            if (!output.trim()) setError("The model returned an empty response. Try again.");
+            if (!output.trim()) {
+                setError(
+                    finished.end === "stop" || finished.end === null
+                        ? "The model returned an empty response. Try again."
+                        : `No output was produced. ${incompleteReason(finished.end)} Try again.`,
+                );
+            } else if (finished.end === "stop") {
+                recordRun(output);
+                notify({ mood: "success", title: "Experiment complete", detail: selected.title });
+            } else {
+                // Length limit, provider error, or a connection that closed early.
+                recordRun(output, finished.end ?? "interrupted");
+                setIncomplete(finished.end ?? "interrupted");
+                notify({ mood: "error", title: "Experiment incomplete", detail: "Partial output kept." });
+            }
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : "Experiment failed. Check that the backend is running.");
+            if (cause instanceof DOMException && cause.name === "AbortError") {
+                // The user stopped the run: keep what streamed so far and say it is partial.
+                if (output.trim()) {
+                    recordRun(output, undefined, true);
+                    setStopped(true);
+                }
+                notify({ mood: "idle", title: "Experiment stopped", detail: output.trim() ? "Partial output kept." : undefined });
+            } else if (output.trim()) {
+                // The connection broke mid-reply: keep the partial text and say it is incomplete.
+                recordRun(output, "interrupted");
+                setIncomplete("interrupted");
+                notify({ mood: "error", title: "Experiment incomplete", detail: "Partial output kept." });
+            } else {
+                setError(cause instanceof Error ? cause.message : "Experiment failed. Check that the backend is running.");
+            }
         } finally {
+            controller.current = null;
             setRunning(false);
         }
     }
 
+    function recordRun(output: string, end?: StreamEnd, wasStopped?: boolean) {
+        const id = nextRunId.current++;
+
+        setHistory((current) =>
+            [{ id, experimentId: selected.id, title: selected.title, prompt: prompt.trim(), output, incomplete: end, stopped: wasStopped, finishedAt: new Date() }, ...current].slice(
+                0,
+                HISTORY_LIMIT,
+            ),
+        );
+        setViewingRun(id);
+    }
+
+    const status = running ? "running" : error ? "failed" : incomplete ? "incomplete" : stopped ? "stopped" : result ? "complete" : "idle";
+    const statusLabel = {
+        running: "Running",
+        failed: "Failed",
+        incomplete: "Incomplete",
+        stopped: "Stopped",
+        complete: "Complete",
+        idle: "Ready to run",
+    }[status];
+    const statusClass = {
+        running: "status--busy",
+        failed: "status--error",
+        incomplete: "status--error",
+        stopped: "",
+        complete: "status--ok",
+        idle: "",
+    }[status];
+
     return (
-        <motion.section
-            className="experiments-lab"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25 }}
-        >
-            <header className="lab-topbar">
-                <button type="button" className="lab-back" onClick={() => window.dispatchEvent(new CustomEvent("latz:experiments-back"))}>
-                    <ArrowDown size={15} /> Workspace
-                </button>
-                <div className="lab-brand"><span className="lab-brand-mark"><FlaskConical size={17} /></span> Experiments <span className="lab-brand-muted">/ Playground</span></div>
-                <div className="lab-live"><span /> AI connected</div>
+        <section className="page experiments-lab">
+            <Link className="page-back" to="/mission-control">
+                <ArrowLeft size={15} aria-hidden="true" />
+                Mission Control
+            </Link>
+
+            <header>
+                <p className="label lab-label">
+                    <FlaskConical size={14} aria-hidden="true" />
+                    Experiments Lab
+                </p>
+                <h1 className="display page-title">Test an idea</h1>
+                <p className="page-lede">
+                    Pick a starting point, edit the instruction, and run it against your configured AI model.
+                </p>
             </header>
 
-            <div className="lab-intro">
-                <div className="lab-kicker"><Sparkles size={14} /> YOUR ENGINEERING PLAYGROUND</div>
-                <h1>Curiosity, meet <span>possibility.</span></h1>
-                <p>Explore ideas, test instructions, and prototype approaches. Pick an experiment and make it your own.</p>
-            </div>
+            <div className="lab-layout section">
+                <div className="lab-experiments" role="radiogroup" aria-label="Experiment type">
+                    {experiments.map((experiment) => {
+                        const Icon = experiment.icon;
+                        const active = selected.id === experiment.id;
 
-            <div className="lab-section-heading">
-                <div><span className="lab-section-label">EXPERIMENT COLLECTION</span><h2>Where do you want to start?</h2></div>
-                <span className="lab-count">03 EXPERIMENTS</span>
-            </div>
+                        return (
+                            <button
+                                type="button"
+                                key={experiment.id}
+                                role="radio"
+                                aria-checked={active}
+                                className={`lab-experiment panel panel--interactive${active ? " is-selected" : ""}`}
+                                onClick={() => chooseExperiment(experiment)}
+                                disabled={running}
+                            >
+                                <span className="lab-experiment__icon" aria-hidden="true">
+                                    <Icon size={18} />
+                                </span>
+                                <span className="lab-experiment__copy">
+                                    <strong>{experiment.title}</strong>
+                                    <small>{experiment.description}</small>
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
 
-            <div className="lab-experiment-grid">
-                {experiments.map((experiment) => {
-                    const Icon = experiment.icon;
-                    const active = selected.id === experiment.id;
-                    return (
-                        <motion.button
-                            type="button"
-                            key={experiment.id}
-                            className={`lab-experiment-card lab-${experiment.color}${active ? " is-selected" : ""}`}
-                            onClick={() => chooseExperiment(experiment)}
-                            whileHover={{ y: -3 }}
-                            whileTap={{ scale: 0.99 }}
+                <div className="lab-workbench panel panel--lit">
+                    <div className="lab-workbench-heading">
+                        <h2 className="section-title">{selected.title}</h2>
+                        <span className={`status ${statusClass}`} role="status">
+                            <span className="status__dot" />
+                            {statusLabel}
+                        </span>
+                    </div>
+
+                    <div className="field">
+                        <label className="field__label" htmlFor="lab-prompt">
+                            Your instruction
+                            <span className="field__hint">
+                                {history.length} {history.length === 1 ? "run" : "runs"} this session
+                            </span>
+                        </label>
+                        <textarea
+                            id="lab-prompt"
+                            className="input lab-prompt-input"
+                            value={prompt}
+                            onChange={(event) => setPrompt(event.target.value)}
+                            placeholder="Describe what you want to test"
+                            rows={5}
+                            disabled={running}
+                        />
+                    </div>
+
+                    <div className="lab-run-row">
+                        <span className="lab-model-note">Uses your configured AI provider</span>
+                        {running && (
+                            <Button onClick={stopExperiment}>
+                                <Square size={13} aria-hidden="true" />
+                                Stop
+                            </Button>
+                        )}
+                        <Button
+                            variant="primary"
+                            onClick={() => void runExperiment()}
+                            disabled={!prompt.trim()}
+                            busy={running}
                         >
-                            <div className="lab-card-top"><span className="lab-card-icon"><Icon size={19} /></span><span className="lab-card-number">{experiment.number}</span></div>
-                            <h3>{experiment.title}</h3>
-                            <p>{experiment.description}</p>
-                            <span className="lab-card-action">{active ? "SELECTED" : "EXPLORE"} <ArrowUp size={14} /></span>
-                        </motion.button>
-                    );
-                })}
-            </div>
+                            {running ? (
+                                "Running"
+                            ) : (
+                                <>
+                                    <Play size={14} aria-hidden="true" />
+                                    Run experiment
+                                </>
+                            )}
+                        </Button>
+                    </div>
 
-            <div className="lab-workbench">
-                <div className="lab-workbench-heading">
-                    <div><span className="lab-section-label">THE WORKBENCH</span><h2>{selected.title}</h2><p>Adjust your instruction, then run it against the connected AI model.</p></div>
-                    <span className="lab-run-count">{runs} {runs === 1 ? "RUN" : "RUNS"} THIS SESSION</span>
+                    {error && <Notice tone="error">{error}</Notice>}
+                    {incomplete && !running && (
+                        <Notice tone="error">
+                            Incomplete output. {incompleteReason(incomplete)} The partial text below is kept; shorten the
+                            request or ask for fewer sections and run it again.
+                        </Notice>
+                    )}
+
+                    {(result || running) && (
+                        <section className="lab-result" aria-live="polite" aria-busy={running}>
+                            <div className="lab-result-heading">
+                                <WolfHead size={30} mood={running ? "thinking" : incomplete ? "error" : "success"} />
+                                <h3>Output</h3>
+                                {result && !running && (
+                                    <Button size="sm" onClick={() => void copyOutput()}>
+                                        <Copy size={13} aria-hidden="true" />
+                                        Copy
+                                    </Button>
+                                )}
+                            </div>
+                            {result ? (
+                                <Markdown>{result}</Markdown>
+                            ) : (
+                                <p className="lab-waiting">Waiting for the first response token</p>
+                            )}
+                            <p className="lab-storage-note">
+                                Runs use the existing AI chat API. The backend may save their prompts and
+                                responses to your chat history.
+                            </p>
+                        </section>
+                    )}
+
+                    {history.length > 0 && (
+                        <section className="lab-history" aria-labelledby="lab-history-title">
+                            <h3 id="lab-history-title">Runs this session</h3>
+                            <p className="lab-storage-note">Kept in this tab only. They are cleared when you leave or refresh.</p>
+                            <ul>
+                                {history.map((run) => (
+                                    <li key={run.id}>
+                                        <button
+                                            type="button"
+                                            className={`lab-history__item${viewingRun === run.id ? " is-selected" : ""}`}
+                                            aria-current={viewingRun === run.id ? "true" : undefined}
+                                            onClick={() => openRun(run)}
+                                            disabled={running}
+                                        >
+                                            <strong>{run.title}</strong>
+                                            <span>{run.prompt}</span>
+                                            <small>{run.finishedAt.toLocaleTimeString(undefined, { timeStyle: "short" })}</small>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </section>
+                    )}
                 </div>
-
-                <label className="lab-prompt-label" htmlFor="lab-prompt">YOUR INSTRUCTION <span>EDITABLE</span></label>
-                <textarea id="lab-prompt" className="lab-prompt-input" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Describe what you want to test..." rows={5} disabled={running} />
-
-                <div className="lab-run-row">
-                    <span className="lab-model-note"><span /> Uses your configured AI provider</span>
-                    <button type="button" className="lab-run-button" onClick={() => void runExperiment()} disabled={running || !prompt.trim()}>
-                        {running ? <><LoaderCircle className="lab-spin" size={16} /> Running experiment</> : <>Run experiment <ArrowUp size={16} /></>}
-                    </button>
-                </div>
-
-                {(result || running || error) && (
-                    <section className="lab-result" aria-live="polite">
-                        <div className="lab-result-heading"><div><Sparkles size={15} /><h3>Experiment output</h3></div>{running ? <span className="lab-result-status"><LoaderCircle className="lab-spin" size={13} /> GENERATING</span> : result ? <span className="lab-result-status lab-result-done"><Check size={13} /> RESPONSE RECEIVED</span> : null}</div>
-                        {error && <div className="lab-error"><CircleAlert size={16} /><span>{error}</span></div>}
-                        {result && <div className="lab-result-content">{result}{running && <span className="lab-cursor" />}</div>}
-                        {!result && running && <div className="lab-waiting"><LoaderCircle className="lab-spin" size={18} /> Waiting for the first response token...</div>}
-                        <p className="lab-storage-note">Runs use the existing AI chat API. The backend may save their prompts and responses to your chat history.</p>
-                    </section>
-                )}
             </div>
-            <footer className="lab-footer"><span>BUILT FOR EXPERIMENTATION</span><span>Make something unexpected <Sparkles size={13} /></span></footer>
-        </motion.section>
+        </section>
     );
 }

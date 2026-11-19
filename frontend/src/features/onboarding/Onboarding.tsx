@@ -1,55 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { ArrowLeft, ArrowRight, Check, Plus } from "lucide-react";
+import { API_BASE, getToken } from "../../shared/api/client";
+import WolfHead from "../../shared/brand/WolfHead";
+import Wordmark from "../../shared/brand/Wordmark";
+import Button from "../../shared/ui/Button";
+import Notice from "../../shared/ui/Notice";
+import { usePageTitle } from "../../shared/hooks/usePageTitle";
+import { ROLE_OPTIONS } from "../../shared/config/lifeRoles";
 import "./Onboarding.css";
 
-const API_BASE = "http://127.0.0.1:8000";
 
-type RoleOption = {
-    role: string;
-    description: string;
-};
-
-const ROLE_OPTIONS: RoleOption[] = [
-    {
-        role: "Student",
-        description:
-            "Learning, studying, building skills and preparing for your future.",
-    },
-    {
-        role: "Engineer",
-        description:
-            "Building systems, products, software or technical solutions.",
-    },
-    {
-        role: "Researcher",
-        description:
-            "Working on research, experiments, publications or discoveries.",
-    },
-    {
-        role: "Entrepreneur",
-        description:
-            "Building a business, startup, product or venture.",
-    },
-    {
-        role: "Faculty",
-        description:
-            "Teaching, mentoring, research or academic responsibilities.",
-    },
-    {
-        role: "Parent",
-        description:
-            "Managing family responsibilities, routines and priorities.",
-    },
-    {
-        role: "Freelancer",
-        description:
-            "Working independently with clients, projects or services.",
-    },
-    {
-        role: "Professional",
-        description:
-            "Managing a professional career, workplace and growth.",
-    },
-];
 
 type OnboardingProps = {
     onComplete: () => void;
@@ -58,6 +18,7 @@ type OnboardingProps = {
 export default function Onboarding({
     onComplete,
 }: OnboardingProps) {
+    usePageTitle("Set up your workspace");
     const [step, setStep] = useState(1);
 
     const [displayName, setDisplayName] = useState("");
@@ -69,9 +30,12 @@ export default function Onboarding({
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
 
+    const nameId = useId();
+    const bioId = useId();
+
     useEffect(() => {
         async function loadExistingOnboarding() {
-            const token = localStorage.getItem("access_token");
+            const token = getToken();
 
             if (!token) {
                 setLoading(false);
@@ -174,7 +138,7 @@ export default function Onboarding({
             return;
         }
 
-        const token = localStorage.getItem("access_token");
+        const token = getToken();
 
         if (!token) {
             setError(
@@ -281,216 +245,148 @@ export default function Onboarding({
 
     if (loading) {
         return (
-            <div className="onboarding-shell">
-                <div className="onboarding-loading">
-                    Loading your LATZ workspace...
-                </div>
+            <div className="app-loading" role="status">
+                <WolfHead size={72} mood="thinking" />
+                <span>Loading your LATZ workspace</span>
             </div>
         );
     }
 
     return (
-        <div className="onboarding-shell">
-            <div className="onboarding-card">
-                <div className="onboarding-brand">
-                    <div className="onboarding-wolf">
-                        🐺
-                    </div>
+        <main className="guest">
+            <section className="guest__card guest__card--wide panel panel--lit">
+                <header className="onboarding-header">
+                    <Wordmark descriptor />
+                    <span className="onboarding-step-count">Step {step} of 2</span>
+                </header>
 
-                    <div>
-                        <div className="onboarding-brand-name">
-                            LATZ
-                        </div>
-
-                        <div className="onboarding-brand-subtitle">
-                            Your personal AI companion
-                        </div>
-                    </div>
-                </div>
-
-                <div className="onboarding-progress">
-                    <span
-                        className={
-                            step === 1
-                                ? "active"
-                                : "completed"
-                        }
-                    />
-
-                    <span
-                        className={
-                            step === 2
-                                ? "active"
-                                : ""
-                        }
-                    />
+                <div
+                    className="onboarding-progress"
+                    role="progressbar"
+                    aria-label="Setup progress"
+                    aria-valuemin={1}
+                    aria-valuemax={2}
+                    aria-valuenow={step}
+                >
+                    <span className="done" />
+                    <span className={step === 2 ? "done" : ""} />
                 </div>
 
                 {step === 1 && (
-                    <section className="onboarding-step">
-                        <div className="onboarding-eyebrow">
-                            LET'S START WITH YOU
-                        </div>
-
-                        <h1>
-                            Before we get started,
-                            <br />
-                            tell me about yourself.
-                        </h1>
+                    <form
+                        className="onboarding-step"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            continueToRoles();
+                        }}
+                        noValidate
+                    >
+                        <h1>Tell LATZ who it's working with</h1>
 
                         <p className="onboarding-description">
-                            LATZ works better when it
-                            understands the person behind
-                            the account.
+                            LATZ uses this to address you and to shape its answers around your background.
                         </p>
 
-                        <label>
-                            What should LATZ call you?
-                        </label>
+                        <div className="field">
+                            <label className="field__label" htmlFor={nameId}>
+                                What should LATZ call you?
+                            </label>
+                            <input
+                                id={nameId}
+                                className="input"
+                                value={displayName}
+                                onChange={(event) => setDisplayName(event.target.value)}
+                                placeholder="Your name"
+                                autoComplete="nickname"
+                            />
+                        </div>
 
-                        <input
-                            value={displayName}
-                            onChange={(event) =>
-                                setDisplayName(
-                                    event.target.value,
-                                )
-                            }
-                            placeholder="Your name"
-                        />
+                        <div className="field">
+                            <label className="field__label" htmlFor={bioId}>
+                                A little about you
+                                <span className="field__hint">Optional</span>
+                            </label>
+                            <textarea
+                                id={bioId}
+                                className="input"
+                                value={bio}
+                                onChange={(event) => setBio(event.target.value)}
+                                placeholder="What you study, build or work on"
+                                rows={4}
+                            />
+                        </div>
 
-                        <label>
-                            Tell LATZ a little about you
-                            <span>Optional</span>
-                        </label>
+                        {error && <Notice tone="error">{error}</Notice>}
 
-                        <textarea
-                            value={bio}
-                            onChange={(event) =>
-                                setBio(event.target.value)
-                            }
-                            placeholder="A short description about you..."
-                            rows={4}
-                        />
-
-                        {error && (
-                            <div className="onboarding-error">
-                                {error}
-                            </div>
-                        )}
-
-                        <button
-                            className="onboarding-primary"
-                            onClick={continueToRoles}
-                        >
-                            Continue
-                            <span>→</span>
-                        </button>
-                    </section>
+                        <div className="onboarding-actions">
+                            <span />
+                            <Button type="submit" variant="primary">
+                                Continue
+                                <ArrowRight size={15} aria-hidden="true" />
+                            </Button>
+                        </div>
+                    </form>
                 )}
 
                 {step === 2 && (
                     <section className="onboarding-step">
-                        <div className="onboarding-eyebrow">
-                            YOUR LIFE
-                        </div>
-
-                        <h1>
-                            What roles are part of
-                            <br />
-                            your life right now?
-                        </h1>
+                        <h1>Which roles are part of your life right now?</h1>
 
                         <p className="onboarding-description">
-                            Choose everything that applies.
-                            You can change these later.
+                            Choose every role that applies. LATZ treats the first one you pick as the
+                            highest priority.
                         </p>
 
                         <div className="role-grid">
                             {ROLE_OPTIONS.map((item) => {
-                                const selected =
-                                    selectedRoles.includes(
-                                        item.role,
-                                    );
+                                const selected = selectedRoles.includes(item.role);
 
                                 return (
                                     <button
+                                        type="button"
                                         key={item.role}
-                                        className={`role-card ${selected
-                                            ? "selected"
-                                            : ""
-                                            }`}
-                                        onClick={() =>
-                                            toggleRole(
-                                                item.role,
-                                            )
-                                        }
+                                        className={`role-card${selected ? " selected" : ""}`}
+                                        aria-pressed={selected}
+                                        onClick={() => toggleRole(item.role)}
                                     >
-                                        <div className="role-card-header">
-                                            <strong>
-                                                {item.role}
-                                            </strong>
-
-                                            <span>
-                                                {selected
-                                                    ? "✓"
-                                                    : "+"}
+                                        <span className="role-card__header">
+                                            <strong>{item.role}</strong>
+                                            <span className="role-card__mark" aria-hidden="true">
+                                                {selected ? <Check size={13} /> : <Plus size={13} />}
                                             </span>
-                                        </div>
-
-                                        <p>
-                                            {
-                                                item.description
-                                            }
-                                        </p>
+                                        </span>
+                                        <span className="role-card__detail">{item.description}</span>
                                     </button>
                                 );
                             })}
                         </div>
 
-                        {selectedRoles.length > 0 && (
-                            <div className="selected-summary">
-                                {selectedRoles.length} role
-                                {selectedRoles.length !== 1
-                                    ? "s"
-                                    : ""}{" "}
-                                selected
-                            </div>
-                        )}
-
-                        {error && (
-                            <div className="onboarding-error">
-                                {error}
-                            </div>
-                        )}
+                        {error && <Notice tone="error">{error}</Notice>}
 
                         <div className="onboarding-actions">
-                            <button
-                                className="onboarding-secondary"
+                            <Button
+                                variant="ghost"
                                 onClick={() => {
                                     setError("");
                                     setStep(1);
                                 }}
                             >
-                                ← Back
-                            </button>
+                                <ArrowLeft size={15} aria-hidden="true" />
+                                Back
+                            </Button>
 
-                            <button
-                                className="onboarding-primary"
-                                onClick={finishOnboarding}
-                                disabled={saving}
-                            >
-                                {saving
-                                    ? "Setting things up..."
-                                    : "Enter LATZ"}
+                            <span className="onboarding-selected" aria-live="polite">
+                                {selectedRoles.length > 0 &&
+                                    `${selectedRoles.length} role${selectedRoles.length !== 1 ? "s" : ""} selected`}
+                            </span>
 
-                                {!saving && (
-                                    <span>→</span>
-                                )}
-                            </button>
+                            <Button variant="primary" busy={saving} onClick={() => void finishOnboarding()}>
+                                {saving ? "Setting up" : "Enter LATZ"}
+                            </Button>
                         </div>
                     </section>
                 )}
-            </div>
-        </div>
+            </section>
+        </main>
     );
 }

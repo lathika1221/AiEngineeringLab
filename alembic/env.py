@@ -1,5 +1,5 @@
 from src.database.base import Base
-from src.models import User, Chat, Conversation, Memory, UserProfile, LifeRole, Goal, Project
+from src.models import User, Chat, Conversation, Memory, UserProfile, LifeRole, Goal, Project, AiUsageDaily
 from src.config.settings import settings
 
 from logging.config import fileConfig

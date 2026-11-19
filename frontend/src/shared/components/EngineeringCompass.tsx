@@ -1,88 +1,24 @@
 import "./EngineeringCompass.css";
-import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { engineeringModes } from "../config/engineeringModes";
-import type { WorkspaceAction } from "../../app/layouts/WorkspaceLayout";
 
-type EngineeringCompassProps = {
-    selectedMode: WorkspaceAction;
-    onSelectMode: (
-        mode: WorkspaceAction,
-    ) => void;
-};
-
-const modeMap: Record<
-    string,
-    WorkspaceAction
-> = {
-    forge: "forge",
-    learn: "learn",
-    research: "research",
-    explore: "explore",
-    solve: "solve",
-};
-
-export default function EngineeringCompass({
-    selectedMode,
-    onSelectMode,
-}: EngineeringCompassProps) {
-    const selected =
-        engineeringModes.find(
-            (mode) =>
-                modeMap[mode.id] ===
-                selectedMode,
-        ) ??
-        engineeringModes[0];
-
+/** The five engineering modes laid out along one orbital line. Each opens its workspace. */
+export default function EngineeringCompass() {
     return (
-        <>
-            <div className="description">
-                <h3>
-                    {selected.title}
-                </h3>
+        <nav className="compass" aria-label="Engineering modes">
+            {engineeringModes.map((mode) => {
+                const Icon = mode.icon;
 
-                <p>
-                    {selected.description}
-                </p>
-            </div>
-
-            <div className="compass">
-                {engineeringModes.map(
-                    (mode) => {
-                        const workspaceMode =
-                            modeMap[mode.id];
-
-                        const isSelected =
-                            workspaceMode ===
-                            selectedMode;
-
-                        return (
-                            <motion.button
-                                key={mode.id}
-                                type="button"
-                                className={`mode-node ${mode.id} ${isSelected
-                                    ? "active"
-                                    : ""
-                                    }`}
-                                onClick={() =>
-                                    onSelectMode(
-                                        workspaceMode,
-                                    )
-                                }
-                                whileHover={{
-                                    scale: 1.08,
-                                    boxShadow:
-                                        "0 0 30px rgba(56,189,248,.45)",
-                                }}
-                                whileTap={{
-                                    scale: 0.96,
-                                }}
-                            >
-                                {mode.title}
-                            </motion.button>
-                        );
-                    },
-                )}
-            </div>
-        </>
+                return (
+                    <Link key={mode.id} className="compass-node" to={`/${mode.id}`}>
+                        <span className="compass-node__dial" aria-hidden="true">
+                            <Icon size={20} />
+                        </span>
+                        <span className="compass-node__title">{mode.title}</span>
+                        <span className="compass-node__detail">{mode.description}</span>
+                    </Link>
+                );
+            })}
+        </nav>
     );
 }

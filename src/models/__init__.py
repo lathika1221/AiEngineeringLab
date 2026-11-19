@@ -6,3 +6,4 @@ from src.models.profile import UserProfile
 from src.models.life_role import LifeRole
 from src.models.goal import Goal
 from src.models.project import Project
+from src.models.ai_usage import AiUsageDaily

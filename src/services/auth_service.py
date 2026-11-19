@@ -33,6 +33,18 @@ def create_user(db: Session, user: UserCreate):
     return new_user
 
 
+_timing_hash: str | None = None
+
+
+def _equalize_timing(password: str) -> None:
+    """Spend the same bcrypt work for an unknown account as for a known one, so
+    response time does not reveal whether an account exists."""
+    global _timing_hash
+    if _timing_hash is None:
+        _timing_hash = hash_password("latz-timing-equalisation-only")
+    verify_password(password, _timing_hash)
+
+
 def login_user(
     db: Session,
     identifier: str,
@@ -48,6 +60,7 @@ def login_user(
     )
 
     if not db_user:
+        _equalize_timing(password)
         return None
 
     if not verify_password(

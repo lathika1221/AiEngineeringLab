@@ -277,6 +277,84 @@ def test_other_production_settings_are_not_changed_by_the_flag_defaults():
     assert s.DEBUG is False
 
 
+# ------------------------------------------------ TRUSTED_CLIENT_IP_HEADER (Railway opt-in)
+def test_trusted_client_ip_header_defaults_to_empty_everywhere():
+    assert dev_settings().TRUSTED_CLIENT_IP_HEADER == ""
+    s = prod_settings()
+    assert s.TRUSTED_CLIENT_IP_HEADER == "" and s.TRUSTED_PROXY_COUNT == 0
+
+
+@pytest.mark.parametrize("value", ["x-real-ip", "X-Real-IP", "  x-real-ip  ", "X-REAL-IP"])
+def test_trusted_client_ip_header_accepts_x_real_ip_in_any_case(value):
+    assert dev_settings(TRUSTED_CLIENT_IP_HEADER=value).TRUSTED_CLIENT_IP_HEADER == "x-real-ip"
+    assert prod_settings(TRUSTED_CLIENT_IP_HEADER=value).TRUSTED_CLIENT_IP_HEADER == "x-real-ip"
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_trusted_client_ip_header_blank_means_off(value):
+    assert dev_settings(TRUSTED_CLIENT_IP_HEADER=value).TRUSTED_CLIENT_IP_HEADER == ""
+    assert prod_settings(TRUSTED_CLIENT_IP_HEADER=value).TRUSTED_CLIENT_IP_HEADER == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["x-forwarded-for", "forwarded", "cf-connecting-ip", "true", "1", "x-real-ip,x-forwarded-for", "x_real_ip", 5, None],
+)
+def test_trusted_client_ip_header_rejects_every_other_value(value):
+    with pytest.raises(ValidationError):
+        dev_settings(TRUSTED_CLIENT_IP_HEADER=value)
+    with pytest.raises(ValidationError):
+        prod_settings(TRUSTED_CLIENT_IP_HEADER=value)
+
+
+def test_trusted_client_ip_header_is_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("TRUSTED_CLIENT_IP_HEADER", "x-real-ip")
+    assert prod_settings().TRUSTED_CLIENT_IP_HEADER == "x-real-ip"
+    monkeypatch.setenv("TRUSTED_CLIENT_IP_HEADER", "x-forwarded-for")
+    with pytest.raises(ValidationError):
+        prod_settings()
+
+
+def test_production_rejects_the_header_together_with_a_proxy_count():
+    with pytest.raises(ValidationError) as caught:
+        prod_settings(TRUSTED_CLIENT_IP_HEADER="x-real-ip", TRUSTED_PROXY_COUNT=1)
+    message = str(caught.value)
+    assert "TRUSTED_CLIENT_IP_HEADER" in message and "TRUSTED_PROXY_COUNT" in message
+
+
+def test_production_accepts_either_source_alone_and_proxy_count_zero_with_the_header():
+    assert prod_settings(TRUSTED_CLIENT_IP_HEADER="x-real-ip").TRUSTED_PROXY_COUNT == 0
+    assert prod_settings(TRUSTED_CLIENT_IP_HEADER="x-real-ip", TRUSTED_PROXY_COUNT=0).TRUSTED_CLIENT_IP_HEADER == "x-real-ip"
+    s = prod_settings(TRUSTED_PROXY_COUNT=2)
+    assert s.TRUSTED_PROXY_COUNT == 2 and s.TRUSTED_CLIENT_IP_HEADER == ""
+
+
+def test_the_conflict_is_a_production_rule_only():
+    s = dev_settings(TRUSTED_CLIENT_IP_HEADER="x-real-ip", TRUSTED_PROXY_COUNT=1)
+    assert (s.TRUSTED_CLIENT_IP_HEADER, s.TRUSTED_PROXY_COUNT) == ("x-real-ip", 1)
+
+
+def test_conflict_error_does_not_echo_configuration_values():
+    with pytest.raises(ValidationError) as caught:
+        prod_settings(TRUSTED_CLIENT_IP_HEADER="x-real-ip", TRUSTED_PROXY_COUNT=1)
+    text = str(caught.value)
+    for secret in (FAKE_SECRET, FAKE_PROVIDER_KEY, "app:pw@"):
+        assert secret not in text
+
+
+def test_render_blueprint_does_not_enable_the_header_and_keeps_proxy_count_zero():
+    text = (REPO_ROOT / "render.yaml").read_text()
+    assert "TRUSTED_CLIENT_IP_HEADER" not in text  # Render behaviour is unchanged
+    if "TRUSTED_PROXY_COUNT" in text:
+        i = text.index("key: TRUSTED_PROXY_COUNT")
+        assert 'value: "0"' in text[i : i + 80]
+
+
+def test_env_example_documents_the_header_as_optional_and_off():
+    lines = (REPO_ROOT / ".env.example").read_text().splitlines()
+    assert "TRUSTED_CLIENT_IP_HEADER=" in lines  # present and empty by default
+
+
 def test_render_blueprint_sets_both_flags_explicitly_false():
     text = (REPO_ROOT / "render.yaml").read_text()
     for name in ("AI_ENABLED", "REGISTRATION_ENABLED"):

@@ -11,7 +11,22 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # Disposable PostgreSQL for the migration and quota tests (loopback only; the tests
+    # create and drop their own throwaway databases and refuse non-loopback servers).
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
+      LATZ_TEST_PG_ADMIN_URL: postgresql+psycopg2://postgres:ci-only@127.0.0.1:5432/postgres
       PROJECT_NAME: LATZ
       VERSION: ci
       DATABASE_URL: sqlite:///./ci.db

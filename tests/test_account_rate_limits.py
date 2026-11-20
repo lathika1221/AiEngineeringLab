@@ -115,7 +115,7 @@ def test_known_limitation_guesses_spread_over_addresses_are_not_throttled_per_ac
     """Characterization, not a goal: the login limit is per client address only. A caller
     that rotates addresses can try one password per address against one account without
     ever seeing 429. Bounded in practice by bcrypt cost and the 12-72 byte password policy,
-    and listed as a launch gate in docs/CAPACITY_AND_SECURITY.md."""
+    and listed as a launch gate in docs/OPERATIONS.md."""
     statuses = [login(env, "alice", "wrong-password-x", ip=f"203.0.113.{i}").status_code for i in range(1, 9)]
     assert statuses == [401] * 8
 

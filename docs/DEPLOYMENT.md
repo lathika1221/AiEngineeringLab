@@ -52,7 +52,17 @@ Create a Pages project from the repository with:
 | Variable `VITE_API_URL` | the Render service origin, https, no trailing path |
 
 `frontend/.node-version` pins Node 22 (Vite needs 20.19+ or 22.12+); set `NODE_VERSION=22` if the build reports an older Node.
-`frontend/public/_redirects` makes deep links and refreshes work; `frontend/public/_headers` adds basic security headers.
+`frontend/public/_headers` adds the security headers (including a report-only CSP, below). There is deliberately **no** `_redirects` file: Cloudflare Pages serves `index.html` for unknown paths automatically when the project has no top-level `404.html`, so deep links and refreshes work without it, and the old `/* /index.html 200` rule only produced a "possible infinite loop" warning and was ignored. After the first deploy without it, confirm in a private window that a deep link such as `/projects` and an unknown path both load the app (the unknown path shows the app's own "Page not found" screen).
+
+### Content Security Policy (report-only)
+
+`Content-Security-Policy-Report-Only` is set in `_headers`. It **blocks nothing**; violations only show in the browser console. Allowed: own origin; the one inline theme script by sha256; Google Fonts (`fonts.googleapis.com` styles, `fonts.gstatic.com` fonts); `data:` images; API calls to the Railway origin; `style-src 'unsafe-inline'` only because React writes inline style attributes. `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'`. `frontend/tests/csp.test.ts` recomputes the script hash from `index.html` (and `dist/index.html` when built) and fails on drift, wildcards, or an unexpected `connect-src`.
+
+Promotion to enforcement: deploy report-only, open the production site in a private window, sign in, chat, and read the console for "Content Security Policy" reports across every page. Rename the header to `Content-Security-Policy` only when a full pass is clean. If the API origin changes (custom domain), update `connect-src` first; enforcing without that would break every request.
+
+### Preview deployments
+
+`_headers` adds `X-Robots-Tag: noindex` for `<hash>.latz-ai.pages.dev` so previews are not indexed. Previews are still publicly reachable and talk to the production API (CORS only allows the production origin, so a preview cannot call it from a browser). Restricting access is a Cloudflare dashboard setting (Pages project, Settings, General, "Enable access policy" with Cloudflare Access) and is **not applied**; apply it only with explicit approval.
 After the first deploy confirm the Pages address equals what you put in `CORS_ORIGINS`; if not, update it on Render and redeploy the API.
 
 ## 5. Smoke tests (in this order)

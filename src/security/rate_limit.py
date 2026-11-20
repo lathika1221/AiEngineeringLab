@@ -177,3 +177,9 @@ def limit_register(request: Request) -> None:
 def limit_ai_for_user(user_id: int) -> None:
     """Per-user per-minute limit shared by /ai/chat and /ai/chat/stream."""
     enforce("ai", str(user_id), settings.RATE_LIMIT_AI_PER_MINUTE)
+
+
+def limit_account_change(user_id: int) -> None:
+    """Per-account limit for password change and account deletion (both re-check the
+    password, so this bounds guessing by a holder of a stolen token)."""
+    enforce("account-change", str(user_id), settings.RATE_LIMIT_AUTH_PER_MINUTE)

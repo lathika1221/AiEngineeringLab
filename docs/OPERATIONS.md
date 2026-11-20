@@ -38,13 +38,15 @@ Nothing here changes a production setting; it is the reference for deciding to.
 | Secrets in logs/responses | none observed; provider errors are generic | `tests/test_ai_quota.py` (secret-leak cases) |
 | CSP | report-only, **not enforced** | `frontend/public/_headers`, `tests/csp.test.ts` |
 | Token storage | JWT in `localStorage`, ~60 min expiry, logout clears client only | by design; XSS would expose it, which is why CSP matters |
+| Password change | `POST /auth/change-password` (API only, no UI yet): re-checks the current password, rejects reuse, applies the 12 to 72 byte policy, returns a fresh token and invalidates every older one (tokens carry a keyed fingerprint of the password hash) | `tests/test_account_lifecycle.py` |
+| Account deletion | `POST /users/me/delete` (API only, no UI yet): password re-check, deletes the account, everything it owns and its quota counters; other accounts untouched | same file, incl. real PostgreSQL FK cascade |
 | Preview deployments | public, noindex header only | access policy is a dashboard setting, not applied |
 
 **Architecture rule for `x-real-ip` trust (must stay true):** the API is the only service in its Railway environment, no TCP proxy, no CDN/custom domain in front of it. If any changes, clear `TRUSTED_CLIENT_IP_HEADER` and re-review (`docs/DEPLOYMENT.md` section 9).
 
 ## 3. Public-launch gates (registration stays closed until all pass and the owner approves)
 
-Blocking (missing today): password change, password recovery, email verification, account deletion/data export, server-side session revocation, per-account login throttling (a caller rotating addresses is only slowed by bcrypt and the 12 to 72 byte policy; characterized in `tests/test_account_rate_limits.py`), CSP promoted from report-only to enforcing after a clean observation pass, restricted preview deployments, a reviewed Groq cost ceiling, and a production-hosting plan beyond the trial credit.
+Blocking (missing today): a UI for password change and account deletion (the endpoints exist), password recovery and email verification (both need an email provider and a decision on one), data export, logout that revokes the current token (a password change now revokes all of them), per-account login throttling (a caller rotating addresses is only slowed by bcrypt and the 12 to 72 byte policy; characterized in `tests/test_account_rate_limits.py`), CSP promoted from report-only to enforcing after a clean observation pass, restricted preview deployments, a reviewed Groq cost ceiling, and a production-hosting plan beyond the trial credit.
 Non-blocking improvements: shared (Redis or DB) limiter before a second replica, error monitoring/alerting, an uptime check on `/health/ready`.
 
 ## 4. Backup and recovery

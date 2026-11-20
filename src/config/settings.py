@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     # are client-controlled and never trusted. Set it only after verifying the hop
     # count of your platform.
     TRUSTED_PROXY_COUNT: int = Field(default=0, ge=0, le=5)
+    # Header that carries the client address, written by the platform's own edge.
+    # "" (default) = trust no header. "x-real-ip" = use exactly one valid X-Real-IP
+    # value (Railway's public HTTP edge overwrites it on every request). Only enable
+    # it when the app is reachable ONLY through that edge: a request that bypasses the
+    # edge (for example over Railway private networking from another service in the
+    # same environment, or through a TCP proxy) can send any X-Real-IP it likes.
+    # X-Forwarded-For is never consulted in this mode. Not combinable with
+    # TRUSTED_PROXY_COUNT > 0 in production.
+    TRUSTED_CLIENT_IP_HEADER: Literal["", "x-real-ip"] = ""
 
     # --- Field validators ----------------------------------------------------
     @field_validator("ENVIRONMENT", mode="before")
@@ -130,6 +139,15 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             value = value.strip().lower()
             return value or None
+        return value
+
+    @field_validator("TRUSTED_CLIENT_IP_HEADER", mode="before")
+    @classmethod
+    def normalize_trusted_client_ip_header(cls, value):
+        # Case and surrounding whitespace do not matter; any other value is rejected
+        # by the Literal type ("", "x-real-ip") instead of being silently ignored.
+        if isinstance(value, str):
+            return value.strip().lower()
         return value
 
     @field_validator("CORS_ORIGINS")
@@ -220,6 +238,13 @@ class Settings(BaseSettings):
             problems.append(f"AI_PROVIDER must be {PRODUCTION_AI_PROVIDER} in production (Groq-only deployment)")
         elif self.AI_ENABLED and not self.GROQ_API_KEY.strip():
             problems.append("GROQ_API_KEY is required in production when AI_ENABLED=true")
+
+        # Two different sources of the client address must never be configured together.
+        if self.TRUSTED_CLIENT_IP_HEADER and self.TRUSTED_PROXY_COUNT > 0:
+            problems.append(
+                "TRUSTED_CLIENT_IP_HEADER and TRUSTED_PROXY_COUNT > 0 cannot both be set in production; "
+                "choose one source of the client address"
+            )
 
         if problems:
             raise ValueError(

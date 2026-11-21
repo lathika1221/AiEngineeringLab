@@ -243,3 +243,211 @@ def test_postgres_stress_random_interleavings_never_orphan_usage_rows_or_hurt_ot
     with SASession(pg) as s:
         assert s.get(User, bystander) is not None
         quota.reserve(s, bystander, 5)  # unaffected
+
+
+# ------------------------------------------- F5 lock order: user row first, usage rows second
+from sqlalchemy import select  # noqa: E402
+
+from src.services.auth_service import AccountGone  # noqa: E402
+
+
+@pytest.fixture
+def open_limits(monkeypatch):
+    monkeypatch.setattr(settings, "AI_DAILY_REQUESTS_PER_USER", 10_000)
+    monkeypatch.setattr(settings, "AI_DAILY_REQUESTS_GLOBAL", 1_000_000)
+    monkeypatch.setattr(settings, "AI_DAILY_TOKENS_GLOBAL", 1_000_000_000)
+
+
+def seed_owner(engine, n, with_usage=True):
+    """A real user who already has a usage row today and a chat (the case that deadlocked)."""
+    uid = new_user(engine, n)
+    with SASession(engine) as s:
+        s.add(Chat(user_id=uid, user_message="q", ai_response="a"))
+        s.commit()
+        if with_usage:
+            quota.reserve(s, uid, 10)
+    return uid
+
+
+def leftovers(engine, uid):
+    with SASession(engine) as s:
+        return {
+            "user": s.query(User).filter(User.id == uid).count(),
+            "chats": s.query(Chat).filter(Chat.user_id == uid).count(),
+            "usage": s.query(AiUsageDaily).filter(AiUsageDaily.scope == f"user:{uid}").count(),
+        }
+
+
+def test_postgres_original_deadlock_scenario_now_completes_for_both(pg, open_limits):
+    """The exact interleaving that deadlocked: the reservation holds the user-row lock, the
+    deletion starts and must wait, then the reservation updates the EXISTING usage row."""
+    uid = seed_owner(pg, 1)
+    bystander = seed_owner(pg, 2)
+    out, started = {}, threading.Event()
+    reserver = SASession(pg)
+    reserver.execute(select(User.id).where(User.id == uid).with_for_update(read=True)).first()  # reserve()'s first step
+
+    def delete():
+        with SASession(pg) as s:
+            started.set()
+            try:
+                out["d"] = delete_account(s, s.get(User, uid), PW)
+            except Exception as e:  # noqa: BLE001
+                out["d"] = repr(e)
+
+    t = threading.Thread(target=delete)
+    t.start()
+    started.wait(5)
+    t.join(1.5)
+    assert t.is_alive(), "deletion must wait for the reservation's user-row lock, not run ahead of it"
+    quota.reserve(reserver, uid, 10)  # updates the existing usage row, then commits and releases the lock
+    t.join(15)
+    assert not t.is_alive()
+    assert out["d"] is True, out  # no deadlock, no error
+    assert leftovers(pg, uid) == {"user": 0, "chats": 0, "usage": 0}
+    assert leftovers(pg, bystander) == {"user": 1, "chats": 1, "usage": 1}
+    reserver.close()
+
+
+def test_postgres_second_deleter_sees_the_account_gone_not_a_500(pg):
+    uid = seed_owner(pg, 3)
+    results, barrier = [], threading.Barrier(2)
+
+    def run():
+        with SASession(pg) as s:
+            user = s.get(User, uid)
+            barrier.wait()
+            try:
+                results.append(delete_account(s, user, PW))
+            except AccountGone:
+                results.append("gone")
+            except Exception as e:  # noqa: BLE001
+                results.append(repr(e))
+
+    ts = [threading.Thread(target=run) for _ in range(2)]
+    [t.start() for t in ts]; [t.join(30) for t in ts]
+    assert sorted(map(str, results)) == ["True", "gone"], results
+    assert leftovers(pg, uid) == {"user": 0, "chats": 0, "usage": 0}
+
+
+def test_postgres_wrong_password_takes_no_lock_and_deletes_nothing(pg):
+    uid = seed_owner(pg, 4)
+    holder = SASession(pg)
+    holder.execute(select(User.id).where(User.id == uid).with_for_update()).first()  # someone holds the row lock
+    with SASession(pg) as s:
+        assert delete_account(s, s.get(User, uid), "Wrong-Password-123") is False  # returns at once, no waiting
+    holder.rollback(); holder.close()
+    assert leftovers(pg, uid) == {"user": 1, "chats": 1, "usage": 1}
+
+
+def test_postgres_password_changed_while_waiting_for_the_lock_cancels_the_deletion(pg):
+    uid = seed_owner(pg, 5)
+    changer = SASession(pg)
+    row = changer.execute(select(User).where(User.id == uid).with_for_update()).scalar_one()
+    out = {}
+
+    def delete():
+        with SASession(pg) as s:
+            out["d"] = delete_account(s, s.get(User, uid), PW)  # verifies the OLD password, then waits
+
+    t = threading.Thread(target=delete)
+    t.start(); t.join(1.5)
+    assert t.is_alive()
+    row.hashed_password = hash_password("Brand-New-Password-456")
+    changer.commit()
+    t.join(15)
+    assert out["d"] is False
+    assert leftovers(pg, uid) == {"user": 1, "chats": 1, "usage": 1}
+    changer.close()
+
+
+def test_postgres_repeated_reservation_vs_deletion_races_never_fail_or_orphan(pg, open_limits):
+    """Many rounds, existing usage row every time, several reservers racing one deleter with
+    jittered starts. Allowed outcomes: a reservation succeeds or sees the account gone; the
+    deletion succeeds. Anything else (deadlock, 500-class error) fails the test."""
+    import random
+
+    bystander = seed_owner(pg, 900)
+    for round_ in range(40):
+        uid = seed_owner(pg, 1000 + round_)
+        errors, barrier = [], threading.Barrier(5)
+        rng = random.Random(round_)
+
+        def reserve_loop(delay):
+            barrier.wait()
+            threading.Event().wait(delay)
+            with SASession(pg) as s:
+                for _ in range(4):
+                    try:
+                        quota.reserve(s, uid, 5)
+                    except quota.UserGone:
+                        return
+                    except Exception as e:  # noqa: BLE001
+                        errors.append(f"reserve {e!r}"[:200]); return
+
+        def delete(delay):
+            barrier.wait()
+            threading.Event().wait(delay)
+            with SASession(pg) as s:
+                try:
+                    if delete_account(s, s.get(User, uid), PW) is not True:
+                        errors.append("delete returned False")
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"delete {e!r}"[:200])
+
+        ts = [threading.Thread(target=reserve_loop, args=(rng.random() * 0.02,)) for _ in range(4)]
+        ts.append(threading.Thread(target=delete, args=(rng.random() * 0.02,)))
+        [t.start() for t in ts]; [t.join(60) for t in ts]
+        assert not any(t.is_alive() for t in ts), f"hang in round {round_}"
+        assert not errors, f"round {round_}: {errors}"
+        assert leftovers(pg, uid) == {"user": 0, "chats": 0, "usage": 0}, f"round {round_}"
+    assert leftovers(pg, bystander) == {"user": 1, "chats": 1, "usage": 1}
+
+
+def test_postgres_http_ai_requests_racing_account_deletion_never_500(pg, open_limits, monkeypatch):
+    """Through the real routes on PostgreSQL: AI chat requests and POST /users/me/delete at the
+    same time. Only 200/401/204 are acceptable; never a 5xx."""
+    import random
+
+    Session = sessionmaker(bind=pg, autoflush=False)
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = override
+    monkeypatch.setattr(settings, "AI_ENABLED", True)
+    monkeypatch.setattr(settings, "RATE_LIMIT_AI_PER_MINUTE", 100_000)
+    monkeypatch.setattr(settings, "RATE_LIMIT_AUTH_PER_MINUTE", 100_000)
+    monkeypatch.setattr(ai_routes, "chat_with_ai", lambda **k: "ok")
+    try:
+        bystander = seed_owner(pg, 800)
+        client = TestClient(app, raise_server_exceptions=False)
+        for round_ in range(15):
+            uid = seed_owner(pg, 2000 + round_)
+            r = client.post("/auth/login", data={"username": f"u{2000 + round_}", "password": PW})
+            assert r.status_code == 200, r.text
+            head = {"Authorization": f"Bearer {r.json()['access_token']}"}
+            codes, barrier, rng = [], threading.Barrier(5), random.Random(round_)
+
+            def chat(d):
+                barrier.wait(); threading.Event().wait(d)
+                codes.append(("chat", TestClient(app, raise_server_exceptions=False).post("/ai/chat", json={"message": "hi"}, headers=head).status_code))
+
+            def delete(d):
+                barrier.wait(); threading.Event().wait(d)
+                codes.append(("delete", TestClient(app, raise_server_exceptions=False).post("/users/me/delete", json={"password": PW}, headers=head).status_code))
+
+            ts = [threading.Thread(target=chat, args=(rng.random() * 0.03,)) for _ in range(4)] + [threading.Thread(target=delete, args=(rng.random() * 0.03,))]
+            [t.start() for t in ts]; [t.join(60) for t in ts]
+            assert not any(t.is_alive() for t in ts)
+            bad = [c for c in codes if c[1] >= 500 or (c[0] == "chat" and c[1] not in (200, 401, 429)) or (c[0] == "delete" and c[1] not in (204, 401))]
+            assert not bad, f"round {round_}: {codes}"
+            assert ("delete", 204) in codes or ("delete", 401) in codes
+            assert leftovers(pg, uid) == {"user": 0, "chats": 0, "usage": 0}, f"round {round_}: {codes}"
+        assert leftovers(pg, bystander) == {"user": 1, "chats": 1, "usage": 1}
+    finally:
+        app.dependency_overrides.clear()

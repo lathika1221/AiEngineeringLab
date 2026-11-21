@@ -108,16 +108,45 @@ def change_password(db: Session, user: User, current_password: str, new_password
     }
 
 
+class AccountGone(Exception):
+    """The account was already deleted (for example by a concurrent request)."""
+
+
 def delete_account(db: Session, user: User, password: str) -> bool:
     """Permanently deletes the account and everything it owns (cascade) plus its quota
-    counters. Requires the password again."""
+    counters. Requires the password again.
+
+    Returns False when the password is wrong (or was changed while this ran); raises
+    AccountGone when the account no longer exists.
+
+    Lock order (must match ai_quota_service.reserve): the USER row first, usage rows second.
+    reserve() takes a shared lock on the user row and then updates the usage rows; taking the
+    exclusive user-row lock here before touching the usage rows keeps both operations in the
+    same order, so they cannot deadlock. Only this one row is locked, and only after the
+    (slow) password check, so wrong passwords never take a lock.
+    """
     if not verify_password(password, user.hashed_password):
         return False
+    from sqlalchemy import select
+
     from src.models.ai_usage import AiUsageDaily
 
-    db.query(AiUsageDaily).filter(AiUsageDaily.scope == f"user:{user.id}").delete(
+    user_id = user.id
+    verified_hash = user.hashed_password
+    locked = db.execute(
+        select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if locked is None:
+        db.rollback()
+        raise AccountGone()
+    if locked.hashed_password != verified_hash:
+        # The password changed between the check and the lock: the confirmation no longer holds.
+        db.rollback()
+        return False
+
+    db.query(AiUsageDaily).filter(AiUsageDaily.scope == f"user:{user_id}").delete(
         synchronize_session=False
     )
-    db.delete(user)
+    db.delete(locked)
     db.commit()
     return True

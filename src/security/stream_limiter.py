@@ -57,23 +57,45 @@ class StreamLimiter:
         self._lease = lease_seconds
         self._max = max_stream_seconds
         self._held: dict[int, list[float]] = {}  # id -> [started, last_seen]
+        self._owners: dict[int, object] = {}  # id -> owner (e.g. user id), when one was given
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
 
     def acquire(self, max_slots: int) -> StreamSlot | None:
         """Take a slot, or return None when `max_slots` streams are already running."""
+        slot, _ = self.try_acquire(max_slots)
+        return slot
+
+    def try_acquire(
+        self, max_slots: int, owner: object = None, max_per_owner: int | None = None
+    ) -> tuple[StreamSlot | None, str | None]:
+        """Take a slot. Returns (slot, None) or (None, reason) where reason is "owner"
+        (this owner already holds `max_per_owner` slots) or "full" (the global cap).
+        The per-owner check comes first so one owner can never be the reason the global
+        pool is exhausted: with max_per_owner=1 and a global cap of N, at least N-1 slots
+        always remain for other owners."""
         now = self._clock()
         with self._lock:
             expired = [i for i, (_, seen) in self._held.items() if now - seen >= self._lease]
             for slot_id in expired:
-                del self._held[slot_id]
+                self._drop(slot_id)
             if expired:
                 logger.warning("reclaimed %d idle stream slot(s)", len(expired))
+            if owner is not None and max_per_owner is not None:
+                if sum(1 for o in self._owners.values() if o == owner) >= max_per_owner:
+                    return None, "owner"
             if len(self._held) >= max_slots:
-                return None
+                return None, "full"
             slot_id = next(self._ids)
             self._held[slot_id] = [now, now]
-            return StreamSlot(self, slot_id)
+            if owner is not None:
+                self._owners[slot_id] = owner
+            return StreamSlot(self, slot_id), None
+
+    def _drop(self, slot_id: int) -> None:
+        # caller holds self._lock
+        self._held.pop(slot_id, None)
+        self._owners.pop(slot_id, None)
 
     def _renew(self, slot_id: int) -> bool:
         now = self._clock()
@@ -83,7 +105,7 @@ class StreamLimiter:
                 return False  # already reclaimed or released
             started, seen = entry
             if now - seen >= self._lease or now - started >= self._max:
-                del self._held[slot_id]
+                self._drop(slot_id)
                 logger.warning("stream slot ended: idle lease or maximum duration exceeded")
                 return False
             entry[1] = now
@@ -91,7 +113,7 @@ class StreamLimiter:
 
     def _release(self, slot_id: int) -> None:
         with self._lock:
-            self._held.pop(slot_id, None)
+            self._drop(slot_id)
 
     def active(self) -> int:
         with self._lock:
@@ -100,6 +122,7 @@ class StreamLimiter:
     def reset(self) -> None:
         with self._lock:
             self._held.clear()
+            self._owners.clear()
 
 
 stream_limiter = StreamLimiter()

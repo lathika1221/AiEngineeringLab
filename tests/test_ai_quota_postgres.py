@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.config.settings import settings
 from src.database.base import Base
+from src.models import User
 from src.services import ai_quota_service as quota
 from test_migrations import ADMIN_URL, _create_throwaway_db, _drop_throwaway_db, validate_admin_url
 
@@ -26,6 +27,9 @@ def pg_engine():
 
     engine = create_engine(url, pool_size=25)
     Base.metadata.create_all(engine)
+    with Session(bind=engine) as s:  # reserve() requires the account to exist
+        s.add_all(User(id=i, username=f"q{i}", email=f"q{i}@example.com", hashed_password="x") for i in range(1, 26))
+        s.commit()
     try:
         yield engine
     finally:

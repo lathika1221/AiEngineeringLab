@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, feature/latz-frontend-redesign]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    # Disposable PostgreSQL for the migration and quota tests (loopback only; the tests
+    # create and drop their own throwaway databases and refuse non-loopback servers).
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LATZ_TEST_PG_ADMIN_URL: postgresql+psycopg2://postgres:ci-only@127.0.0.1:5432/postgres
+      PROJECT_NAME: LATZ
+      VERSION: ci
+      DATABASE_URL: sqlite:///./ci.db
+      SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      AI_PROVIDER: groq
+      MODEL_NAME: openai/gpt-oss-20b
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_API_URL: https://api.example.invalid
+      - run: npm audit --omit=dev --audit-level=high

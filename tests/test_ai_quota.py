@@ -21,6 +21,14 @@ from src.models import AiUsageDaily, Chat, User
 from src.services import ai_quota_service as quota
 
 
+def seed_users(engine, count=25):
+    """reserve() refuses accounts that do not exist (deletion safety), so the quota tests that
+    use fixed ids 1..N need real rows for them."""
+    with Session(bind=engine) as s:
+        s.add_all(User(id=i, username=f"quota{i}", email=f"quota{i}@example.com", hashed_password="x") for i in range(1, count + 1))
+        s.commit()
+
+
 def usage_row(db, scope):
     db.expire_all()
     return db.scalars(select(AiUsageDaily).where(AiUsageDaily.scope == scope)).first()
@@ -35,6 +43,7 @@ def counters(db, scope):
 def file_engine(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'quota.db'}", connect_args={"check_same_thread": False, "timeout": 30})
     Base.metadata.create_all(bind=engine)
+    seed_users(engine)
     yield engine
     engine.dispose()
 
@@ -524,3 +533,109 @@ def test_a_lost_commit_acknowledgement_is_documented_as_not_exactly_once(db, lim
     db.commit = real_commit
     assert quota.release(db, reservation) is quota.Settlement.APPLIED  # retry refunds again
     assert counters(db, "user:1") == (-1, -5_000)  # double refund: the documented ambiguity
+
+
+# ------------------------------------------- real provider failure shapes (SDK level)
+# Unlike the stubs above these run the real stream parser in ai_service against a fake
+# Groq client, so they cover what the SDK actually raises or sends.
+def _groq_error(cls, status, message="upstream says key gsk_SECRET_KEY_VALUE is bad"):
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    return cls(message, response=httpx.Response(status, request=request), body={"error": {"message": message}})
+
+
+def _fake_provider(monkeypatch, create):
+    from src.services import ai_service
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(ai_service, "get_ai_client", lambda: client)
+
+
+def _chunk(content=None, finish=None, reasoning=None):
+    delta = SimpleNamespace(content=content, reasoning=reasoning)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)], usage=None, x_groq=None)
+
+
+@pytest.mark.parametrize("status,name", [(401, "AuthenticationError"), (429, "RateLimitError"), (500, "InternalServerError"), (503, "InternalServerError")])
+def test_sdk_http_errors_on_chat_are_refunded_generic_and_secret_free(api, monkeypatch, caplog, status, name):
+    import groq
+
+    def create(**kwargs):
+        raise _groq_error(getattr(groq, name), status)
+
+    _fake_provider(monkeypatch, create)
+    with caplog.at_level("INFO"):
+        response = post_chat(api)
+    assert response.status_code == 502
+    assert response.json() == {"detail": "The AI provider could not complete the request. Please try again."}
+    assert "gsk_SECRET_KEY_VALUE" not in response.text + caplog.text
+    assert reads(api, f"user:{api.ids[0]}") == (0, 0)
+    assert reads(api, quota.GLOBAL_SCOPE) == (0, 0)
+
+
+def test_sdk_connection_error_and_timeout_on_chat_are_refunded(api, monkeypatch):
+    import groq
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    for exc in (groq.APIConnectionError(request=request), groq.APITimeoutError(request=request)):
+        def create(**kwargs):
+            raise exc
+
+        _fake_provider(monkeypatch, create)
+        assert post_chat(api).status_code == 502
+    assert reads(api, f"user:{api.ids[0]}") == (0, 0)
+
+
+def test_stream_provider_401_ends_with_error_marker_and_is_refunded(api, monkeypatch, caplog):
+    import groq
+
+    def create(**kwargs):
+        raise _groq_error(groq.AuthenticationError, 401)
+
+    _fake_provider(monkeypatch, create)
+    with caplog.at_level("INFO"):
+        response = post_chat(api, "/ai/chat/stream")
+    assert response.status_code == 200 and response.text.endswith("error")
+    assert "gsk_SECRET_KEY_VALUE" not in response.text + caplog.text
+    assert reads(api, f"user:{api.ids[0]}") == (0, 0)
+    with api.Session() as s:
+        assert s.query(Chat).count() == 0
+
+
+def test_reasoning_only_stream_cut_by_max_tokens_is_empty_length_refunded_and_not_saved(api, monkeypatch):
+    """A reasoning model can spend the whole output budget thinking. The stream then has
+    no visible content and finish_reason 'length': the client must see 'length', the
+    request must not be charged, and no empty answer may be saved to history."""
+    def create(**kwargs):
+        return iter([_chunk(reasoning="thinking..."), _chunk(reasoning="more thinking"), _chunk(finish="length")])
+
+    _fake_provider(monkeypatch, create)
+    response = post_chat(api, "/ai/chat/stream")
+    assert response.status_code == 200 and response.text.endswith("length")
+    assert response.text.replace("\x1eLATZ-STREAM-END:length", "").strip() == ""
+    assert reads(api, f"user:{api.ids[0]}") == (0, 0)
+    with api.Session() as s:
+        assert s.query(Chat).count() == 0
+
+
+def test_stream_that_never_sends_finish_reason_is_incomplete_but_keeps_its_text(api, monkeypatch):
+    def create(**kwargs):
+        return iter([_chunk(content="partial "), _chunk(content="text")])
+
+    _fake_provider(monkeypatch, create)
+    response = post_chat(api, "/ai/chat/stream")
+    assert response.text.startswith("partial text") and response.text.endswith("incomplete")
+    requests, tokens = reads(api, f"user:{api.ids[0]}")
+    assert requests == 1 and tokens > 0
+
+
+def test_daily_cap_is_a_hard_stop_through_the_api_and_the_provider_is_not_called_past_it(api, monkeypatch, limits):
+    """API-level companion to the thread-level quota tests above: the cap is a
+    hard stop on the Nth+1 request and the provider is never called for it."""
+    limits(per_user=3)
+    calls = []
+    stub_chat(monkeypatch, calls=calls)
+    codes = [post_chat(api).status_code for _ in range(5)]
+    assert codes == [200, 200, 200, 429, 429] and len(calls) == 3

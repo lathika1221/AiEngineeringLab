@@ -2,6 +2,8 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import ObjectDeletedError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
@@ -99,6 +101,13 @@ def reserve_quota_or_429(db: Session, user_id: int, tokens: int) -> quota.QuotaR
     except quota.QuotaExceeded as exc:
         logger.info("AI daily quota exhausted scope=%s user_id=%s", exc.scope, user_id)
         raise HTTPException(status_code=429, detail=exc.detail, headers={"Retry-After": str(exc.retry_after)})
+    except quota.UserGone:
+        raise account_gone()
+
+
+def account_gone() -> HTTPException:
+    """The account was deleted while this request was running."""
+    return HTTPException(status_code=401, detail="This account no longer exists.", headers={"WWW-Authenticate": "Bearer"})
 
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_ai_enabled)])
@@ -122,7 +131,13 @@ def chat(request: ChatRequest, db: Session = Depends(get_db), current_user: User
         logger.error("AI chat failed (%s)", describe_error(exc))
         raise HTTPException(status_code=502, detail="The AI provider could not complete the request. Please try again.")
     quota.settle(db, reservation, quota.measured_tokens(usage, len(response or "")))
-    save_chat(db=db, user=current_user, user_message=request.message, ai_response=response, project_id=effective_project_id, conversation_id=request.conversation_id)
+    try:
+        save_chat(db=db, user=current_user, user_message=request.message, ai_response=response, project_id=effective_project_id, conversation_id=request.conversation_id)
+    except (IntegrityError, ObjectDeletedError):
+        # The account (or its conversation) was deleted while the model was answering.
+        db.rollback()
+        logger.info("chat not saved: owner deleted during request user_id=%s", user_id)
+        raise account_gone()
     return ChatResponse(response=response)
 
 # The stream body is plain text, so completion is signalled in-band: the last
@@ -186,7 +201,12 @@ def generate_stream(db: Session, user: User, request: ChatRequest, project_id: i
             if status != "stop" and response_text.strip():
                 response_text += INCOMPLETE_NOTES[status]
             if response_text.strip():
-                save_chat(db=db, user=user, user_message=request.message, ai_response=response_text, project_id=project_id, conversation_id=request.conversation_id)
+                try:
+                    save_chat(db=db, user=user, user_message=request.message, ai_response=response_text, project_id=project_id, conversation_id=request.conversation_id)
+                except (IntegrityError, ObjectDeletedError):
+                    # Account deleted while streaming: nothing to attach the history to.
+                    db.rollback()
+                    logger.info("stream history not saved: owner deleted during request")
             account()
             yield f"{STREAM_END_MARKER}{status}"
         except Exception:
@@ -208,11 +228,19 @@ def stream_chat(request: ChatRequest, db: Session = Depends(get_db), current_use
     memories = get_memories(db=db, user=current_user)
     context = build_request_context(db=db, user=current_user, project_id=effective_project_id)
 
-    slot = stream_limiter.acquire(settings.AI_MAX_CONCURRENT_STREAMS)
+    slot, denied = stream_limiter.try_acquire(
+        settings.AI_MAX_CONCURRENT_STREAMS,
+        owner=user_id,
+        max_per_owner=settings.AI_MAX_CONCURRENT_STREAMS_PER_USER,
+    )
     if slot is None:
         raise HTTPException(
             status_code=429,
-            detail="Too many AI responses are in progress. Please try again in a few seconds.",
+            detail=(
+                "You already have an AI response in progress. Wait for it to finish."
+                if denied == "owner"
+                else "Too many AI responses are in progress. Please try again in a few seconds."
+            ),
             headers={"Retry-After": str(STREAM_BUSY_RETRY_AFTER_SECONDS)},
         )
     reservation = None

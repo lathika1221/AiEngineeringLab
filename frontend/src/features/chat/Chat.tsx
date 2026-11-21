@@ -27,7 +27,7 @@ import Markdown from "../../shared/markdown/Markdown";
 import { useNotify } from "../../shared/notifications/context";
 import Button from "../../shared/ui/Button";
 import ConfirmDialog from "../../shared/ui/ConfirmDialog";
-import { incompleteReason, splitStreamEnd, type StreamEnd } from "../../shared/api/streamEnd";
+import { emptyReplyMessage, incompleteReason, splitStreamEnd, type StreamEnd } from "../../shared/api/streamEnd";
 import { UserFacingError, chatErrorMessage, chatFailureFromResponse } from "../../shared/api/errorMessages";
 import Modal from "../../shared/ui/Modal";
 import Notice from "../../shared/ui/Notice";
@@ -795,7 +795,7 @@ export default function Chat({
             raw += decoder.decode();
             const finished = splitStreamEnd(raw);
             if (!finished.text.trim() && finished.end !== "stop") {
-                throw new UserFacingError("The model returned no reply. Please try again.");
+                throw new UserFacingError(emptyReplyMessage(finished.end));
             }
             show(finished.text, finished.end === "stop" ? undefined : (finished.end ?? "interrupted"));
 

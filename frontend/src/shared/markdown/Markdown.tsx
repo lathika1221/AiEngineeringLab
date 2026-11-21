@@ -5,6 +5,7 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { highlight, languageLabel } from "./highlight";
+import { decideImage } from "./imageSource";
 import { CELL_BREAK, CELL_LANG, normalizeMarkdown } from "./normalize";
 import "./Markdown.css";
 
@@ -140,9 +141,19 @@ const components: Components = {
             {children}
         </a>
     ),
-    // Addresses the sanitiser rejects (data:, javascript:) arrive empty: show the description instead.
-    img: ({ src, alt }) =>
-        src ? <img src={src} alt={alt ?? ""} loading="lazy" /> : <span className="image-missing">{alt}</span>,
+    // Model output is untrusted: only same-origin images load. Remote and other addresses
+    // (and any the sanitiser already emptied) show their description instead. See imageSource.ts.
+    img: ({ src, alt }) => {
+        const decision = decideImage(src, alt);
+
+        return decision.kind === "image" ? (
+            <img src={decision.src} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" />
+        ) : (
+            <span className="image-missing" title="Images from other sites are not loaded">
+                {decision.alt}
+            </span>
+        );
+    },
 };
 
 const plugins = [remarkGfm];

@@ -21,6 +21,14 @@ from src.models import AiUsageDaily, Chat, User
 from src.services import ai_quota_service as quota
 
 
+def seed_users(engine, count=25):
+    """reserve() refuses accounts that do not exist (deletion safety), so the quota tests that
+    use fixed ids 1..N need real rows for them."""
+    with Session(bind=engine) as s:
+        s.add_all(User(id=i, username=f"quota{i}", email=f"quota{i}@example.com", hashed_password="x") for i in range(1, count + 1))
+        s.commit()
+
+
 def usage_row(db, scope):
     db.expire_all()
     return db.scalars(select(AiUsageDaily).where(AiUsageDaily.scope == scope)).first()
@@ -35,6 +43,7 @@ def counters(db, scope):
 def file_engine(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'quota.db'}", connect_args={"check_same_thread": False, "timeout": 30})
     Base.metadata.create_all(bind=engine)
+    seed_users(engine)
     yield engine
     engine.dispose()
 

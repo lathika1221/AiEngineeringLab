@@ -3,6 +3,8 @@ import type { FormEvent } from "react";
 import { ArrowLeft } from "lucide-react";
 import { API_BASE } from "../../shared/api/client";
 import { submitLogin } from "./loginRequest";
+import { submitRegister } from "./registerRequest";
+import { MIN_PASSWORD_LENGTH, validateRegistration } from "./registerRules";
 import { usePageTitle } from "../../shared/hooks/usePageTitle";
 import WolfHead from "../../shared/brand/WolfHead";
 import Button from "../../shared/ui/Button";
@@ -67,23 +69,10 @@ export default function Auth({ mode, onModeChange, onLogin, onBack }: AuthProps)
     }
 
     async function register() {
-        if (!username.trim()) {
-            setError("Enter a username.");
-            return;
-        }
+        const problem = validateRegistration({ username, email, password });
 
-        if (!email.trim()) {
-            setError("Enter your email address.");
-            return;
-        }
-
-        if (!password) {
-            setError("Create a password.");
-            return;
-        }
-
-        if (password.length < 8) {
-            setError("Password must contain at least 8 characters.");
+        if (problem) {
+            setError(problem);
             return;
         }
 
@@ -92,40 +81,17 @@ export default function Auth({ mode, onModeChange, onLogin, onBack }: AuthProps)
         setSuccess("");
 
         try {
-            const response = await fetch(`${API_BASE}/auth/register`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    username: username.trim(),
-                    email: email.trim(),
-                    password,
-                }),
-            });
+            const result = await submitRegister(fetch, API_BASE, { username, email, password });
 
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(
-                    typeof data.detail === "string"
-                        ? data.detail
-                        : "Unable to create your account. Check your details and try again.",
-                );
+            if (!result.ok) {
+                setError(result.message);
+                return;
             }
 
             onModeChange("login");
             setPassword("");
 
             setSuccess("Account created successfully. You can sign in now.");
-        } catch (error) {
-            setError(
-                error instanceof TypeError
-                    ? "Can't reach the LATZ server. Check that the backend is running."
-                    : error instanceof Error
-                      ? error.message
-                      : "Registration failed.",
-            );
         } finally {
             setLoading(false);
         }
@@ -228,7 +194,7 @@ export default function Auth({ mode, onModeChange, onLogin, onBack }: AuthProps)
                         <label className="field__label" htmlFor={passwordId}>
                             Password
                             {mode === "register" && (
-                                <span className="field__hint">At least 8 characters</span>
+                                <span className="field__hint">At least {MIN_PASSWORD_LENGTH} characters</span>
                             )}
                         </label>
                         <input

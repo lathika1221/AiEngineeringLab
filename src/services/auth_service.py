@@ -1,24 +1,29 @@
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.auth.hash import hash_password
 from src.auth.hash import verify_password
 from src.auth.jwt import create_access_token, password_fingerprint
 from src.models.user import User
-from src.schemas.user import UserCreate
+from src.schemas.user import UserCreate, normalize_email
 
 
 def create_user(db: Session, user: UserCreate):
-    # Also refuse when the new e-mail equals an existing username or the new username
-    # equals an existing e-mail, so no two accounts can ever answer to the same login
-    # identifier (the schema already forbids '@' in usernames; this guards legacy rows
-    # and any caller that bypasses the schema).
+    # E-mail is compared case-insensitively (legacy rows may hold mixed case) and stored in
+    # lower case. Also refuse when the new e-mail equals an existing username or the new
+    # username equals an existing e-mail, so no two accounts can ever answer to the same
+    # login identifier (the schema already forbids '@' in usernames; this guards legacy
+    # rows and any caller that bypasses the schema).
+    email = normalize_email(user.email)
+
     existing = (
         db.query(User)
         .filter(
-            (User.email == user.email)
+            (func.lower(User.email) == email)
             | (User.username == user.username)
-            | (User.username == user.email)
-            | (User.email == user.username)
+            | (User.username == email)
+            | (func.lower(User.email) == user.username.lower())
         )
         .first()
     )
@@ -28,12 +33,20 @@ def create_user(db: Session, user: UserCreate):
 
     new_user = User(
         username=user.username,
-        email=user.email,
+        email=email,
         hashed_password=hash_password(user.password),
     )
 
     db.add(new_user)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two simultaneous registrations for the same name or address: the database's
+        # unique constraints decide, and the loser gets the normal "already exists" answer.
+        db.rollback()
+        return None
+
     db.refresh(new_user)
 
     return new_user
@@ -52,12 +65,18 @@ def _equalize_timing(password: str) -> None:
 
 
 def _find_login_user(db: Session, identifier: str):
-    """Deterministic identifier resolution: an exact e-mail match always wins; only when
+    """Deterministic identifier resolution: an e-mail match (case-insensitive, lowest id if
+    legacy rows differ only by case) always wins; only when
     no e-mail matches is the value treated as a username. Both columns are unique, so
     each step yields at most one row and no ordering depends on the database. Anyone who
     cannot own the e-mail therefore can never capture, shadow or lock out that address
     by choosing a username (usernames cannot contain '@' in any case)."""
-    by_email = db.query(User).filter(User.email == identifier).one_or_none()
+    by_email = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalize_email(identifier))
+        .order_by(User.id)
+        .first()
+    )
     if by_email is not None:
         return by_email
     return db.query(User).filter(User.username == identifier).one_or_none()

@@ -18,6 +18,10 @@ def validate_username(value: str) -> str:
     return value
 
 
+def normalize_email(value: str) -> str:
+    return value.strip().lower()
+
+
 class UserCreate(BaseModel):
     username: str
     email: EmailStr
@@ -27,6 +31,13 @@ class UserCreate(BaseModel):
     @classmethod
     def validate_username_rules(cls, value: str) -> str:
         return validate_username(value)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email_case(cls, value: str) -> str:
+        # E-mail addresses are stored and compared in lower case so that "A@x.com" and
+        # "a@x.com" are one account. Usernames keep the case the user typed.
+        return normalize_email(value)
 
     @field_validator("password")
     @classmethod

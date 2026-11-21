@@ -186,3 +186,81 @@ def test_postgres_existing_style_accounts_unaffected(pg_engine):
         db.commit()
         assert login_user(db, "latz", VICTIM_PW) and login_user(db, "latz@example.com", VICTIM_PW)
         assert login_user(db, "latz", "wrong-password-xx") is None
+
+
+# ------------------------------------------------------------------ e-mail case (registration fix)
+@pytest.fixture
+def db_session():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def test_email_is_stored_lowercase_and_username_case_is_kept(db_session):
+    created = create_user(db_session, make("Mixed.Case", "LATHIKAPRANAV777@GMAIL.COM"))
+    assert created.email == "lathikapranav777@gmail.com"
+    assert created.username == "Mixed.Case"
+
+
+@pytest.mark.parametrize("second", ["person@example.com", "PERSON@EXAMPLE.COM", "Person@Example.Com", " person@example.com "])
+def test_duplicate_email_is_rejected_whatever_the_case(db_session, second):
+    assert create_user(db_session, make("first", "Person@Example.com")) is not None
+    assert create_user(db_session, make("second", second.strip())) is None
+    assert db_session.query(User).count() == 1
+
+
+def test_login_resolves_any_case_of_the_same_email(db_session):
+    create_user(db_session, make("someone", "Someone@Example.com", "Valid-Password-1234"))
+    for ident in ["someone@example.com", "SOMEONE@EXAMPLE.COM", "Someone@Example.Com", " someone@example.com "]:
+        assert login_user(db_session, ident, "Valid-Password-1234") is not None, ident
+    assert login_user(db_session, "someone", "Valid-Password-1234") is not None
+    assert login_user(db_session, "someone@example.com", "wrong-wrong-12345") is None
+
+
+def test_username_login_stays_case_sensitive(db_session):
+    create_user(db_session, make("CaseUser", "case@example.com", "Valid-Password-1234"))
+    assert login_user(db_session, "CaseUser", "Valid-Password-1234") is not None
+    assert login_user(db_session, "caseuser", "Valid-Password-1234") is None
+
+
+def test_legacy_mixed_case_email_row_still_logs_in_and_blocks_duplicates(db_session):
+    # A row written before normalisation existed (raw insert, mixed case).
+    db_session.add(User(username="legacy", email="Legacy@Example.com", hashed_password=hash_password("Valid-Password-1234")))
+    db_session.commit()
+    assert login_user(db_session, "legacy@example.com", "Valid-Password-1234") is not None
+    assert login_user(db_session, "LEGACY@EXAMPLE.COM", "Valid-Password-1234") is not None
+    assert create_user(db_session, make("other", "legacy@example.com")) is None
+
+
+def test_registration_endpoint_case_insensitive_duplicate_and_validation_shape(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+
+    def override():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override
+    monkeypatch.setattr(settings, "REGISTRATION_ENABLED", True)
+    try:
+        client = TestClient(app)
+        ok = client.post("/auth/register", json={"username": "user1", "email": "New@Example.COM", "password": "Valid-Password-1234"})
+        assert ok.status_code == 200 and ok.json()["email"] == "new@example.com"
+        dup = client.post("/auth/register", json={"username": "user2", "email": "NEW@example.com", "password": "Valid-Password-1234"})
+        assert dup.status_code == 400
+        short = client.post("/auth/register", json={"username": "user3", "email": "user3@example.com", "password": "Short-pw-11"})
+        assert short.status_code == 422
+        assert isinstance(short.json()["detail"], list)
+        assert short.json()["detail"][0]["loc"] == ["body", "password"]
+        login = client.post("/auth/login", data={"username": "NEW@EXAMPLE.COM", "password": "Valid-Password-1234"})
+        assert login.status_code == 200
+    finally:
+        app.dependency_overrides.clear()

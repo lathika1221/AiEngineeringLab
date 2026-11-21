@@ -41,7 +41,11 @@ Nothing here changes a production setting; it is the reference for deciding to.
 | Token storage | JWT in `localStorage`, ~60 min expiry, logout clears client only | by design; XSS would expose it, which is why CSP matters |
 | Password change | `POST /auth/change-password` (API only, no UI yet): re-checks the current password, rejects reuse, applies the 12 to 72 byte policy, returns a fresh token and invalidates every older one (tokens carry a keyed fingerprint of the password hash) | `tests/test_account_lifecycle.py` |
 | Account deletion | `POST /users/me/delete` (API only, no UI yet): password re-check, deletes the account, everything it owns and its quota counters; other accounts untouched | same file, incl. real PostgreSQL FK cascade |
-| Preview deployments | public, noindex header only | access policy is a dashboard setting, not applied |
+| Login identifiers | usernames cannot contain `@` (schema and model guard); login tries an exact e-mail match first, then a username, so a legacy colliding row can neither take over nor lock out an address owner | `tests/test_login_identifiers.py` (incl. PostgreSQL, both insertion orders); production check: 1 user, no violations |
+| AI concurrency | global cap 3 streams, plus 1 stream per account (`AI_MAX_CONCURRENT_STREAMS_PER_USER`); slots freed on success, cancel, timeout, provider failure | `tests/test_stream_limits.py`, `tests/test_stream_fairness.py` (4 real accounts) |
+| Model-generated images | Markdown images load only from this app's own origin; remote, `//host`, `data:`, `javascript:` render their description text (stops URL-based data leaks). CSP unchanged | `frontend/tests/markdownImages.test.ts` |
+| Deletion during a request | reservation locks the user row (PostgreSQL), so a concurrent deletion never leaves an orphaned usage row; a vanished owner gives 401 or a clean stream end, never a 500 | `tests/test_deletion_races.py` (incl. lock-ordering and interleaving tests) |
+| Preview deployments | public, noindex header only | access policy is a dashboard setting, not applied (exact steps: `docs/DEPLOYMENT.md`, "Preview deployments") |
 
 **Architecture rule for `x-real-ip` trust (must stay true):** the API is the only service in its Railway environment, no TCP proxy, no CDN/custom domain in front of it. If any changes, clear `TRUSTED_CLIENT_IP_HEADER` and re-review (`docs/DEPLOYMENT.md` section 9).
 

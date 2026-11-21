@@ -60,10 +60,29 @@ Create a Pages project from the repository with:
 
 Promotion to enforcement: deploy report-only, open the production site in a private window, sign in, chat, and read the console for "Content Security Policy" reports across every page. Rename the header to `Content-Security-Policy` only when a full pass is clean. If the API origin changes (custom domain), update `connect-src` first; enforcing without that would break every request.
 
+### CSP violation reporting (evaluated, no external service)
+
+Today violations are read by hand in the browser console during the observation pass above; there is no `report-uri` / `report-to` directive and no collector. Options considered:
+
+1. **Console review only (current, recommended for a demo).** Free, nothing new to attack. Cost: only sees what the reviewer's own browser hits.
+2. **Report endpoint on the existing API** (`POST /csp-report` that logs a size-capped, rate-limited line to Railway logs, with `report-uri` in `_headers`). No third-party service, but it is a new unauthenticated write path (log flooding, junk reports) and the report body can contain page URLs, so it needs a body cap, its own rate-limit scope, and logging of the directive and blocked host only. Worth adding only when CSP enforcement is scheduled and the observation pass needs wider coverage.
+3. **Hosted collector (report-uri.com and similar).** Rejected: introduces an external service.
+
+Decision for PR #4: option 1; revisit option 2 together with the enforcement promotion.
+
 ### Preview deployments
 
-`_headers` adds `X-Robots-Tag: noindex` for `<hash>.latz-ai.pages.dev` so previews are not indexed. Previews are still publicly reachable and talk to the production API (CORS only allows the production origin, so a preview cannot call it from a browser). Restricting access is a Cloudflare dashboard setting (Pages project, Settings, General, "Enable access policy" with Cloudflare Access) and is **not applied**; apply it only with explicit approval.
-After the first deploy confirm the Pages address equals what you put in `CORS_ORIGINS`; if not, update it on Render and redeploy the API.
+`_headers` adds `X-Robots-Tag: noindex` for `<hash>.latz-ai.pages.dev` so previews are not indexed. **noindex is not access control**: previews are publicly reachable by anyone with the link. They talk to the production API, but CORS only allows the production origin, so a preview cannot call it from a browser.
+
+**Restricting previews with Cloudflare Access (not applied; do it only with explicit approval).** Exact configuration:
+
+1. Cloudflare dashboard, Workers & Pages, project `latz-ai`, Settings, General, **Enable access policy**. Cloudflare creates an Access application for the preview hostnames `*.latz-ai.pages.dev` only, with an Allow policy for the members of your Cloudflare account, using the one-time-PIN e-mail login.
+2. Zero Trust, Access, Applications: open that application and check the **destination** is the preview wildcard `*.latz-ai.pages.dev` and nothing broader. Keep the policy Action = Allow, Include = your own e-mail address (or account members). No bypass rule, no "everyone".
+3. **Do not add the production host** `latz-ai.pages.dev` to this application: the site is a public demo and would stop loading for visitors. (Cloudflare's per-project switch covers previews only; protecting the production `pages.dev` host is a separate manual step and is deliberately not wanted here.)
+4. Verify in a private window: a preview URL shows the Cloudflare Access login page; `https://latz-ai.pages.dev` still loads the app with no login; the production API and CORS behaviour are unchanged.
+5. Rollback: Settings, General, disable the access policy (or delete the Access application). Nothing else depends on it.
+
+Caveat: branch aliases such as `<branch>.latz-ai.pages.dev` match the same wildcard, so they are protected too; CI that fetches a preview URL would need a Service Auth token policy.
 
 ## 5. Smoke tests (in this order)
 1. Open the site, then refresh on `/projects` and on `/login`: no 404.

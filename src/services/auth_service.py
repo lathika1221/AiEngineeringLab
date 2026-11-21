@@ -8,16 +8,22 @@ from src.schemas.user import UserCreate
 
 
 def create_user(db: Session, user: UserCreate):
+    # Also refuse when the new e-mail equals an existing username or the new username
+    # equals an existing e-mail, so no two accounts can ever answer to the same login
+    # identifier (the schema already forbids '@' in usernames; this guards legacy rows
+    # and any caller that bypasses the schema).
     existing = (
         db.query(User)
         .filter(
             (User.email == user.email)
             | (User.username == user.username)
+            | (User.username == user.email)
+            | (User.email == user.username)
         )
         .first()
     )
 
-    if existing:
+    if existing or "@" in user.username:
         return None
 
     new_user = User(
@@ -45,19 +51,24 @@ def _equalize_timing(password: str) -> None:
     verify_password(password, _timing_hash)
 
 
+def _find_login_user(db: Session, identifier: str):
+    """Deterministic identifier resolution: an exact e-mail match always wins; only when
+    no e-mail matches is the value treated as a username. Both columns are unique, so
+    each step yields at most one row and no ordering depends on the database. Anyone who
+    cannot own the e-mail therefore can never capture, shadow or lock out that address
+    by choosing a username (usernames cannot contain '@' in any case)."""
+    by_email = db.query(User).filter(User.email == identifier).one_or_none()
+    if by_email is not None:
+        return by_email
+    return db.query(User).filter(User.username == identifier).one_or_none()
+
+
 def login_user(
     db: Session,
     identifier: str,
     password: str,
 ):
-    db_user = (
-        db.query(User)
-        .filter(
-            (User.email == identifier)
-            | (User.username == identifier)
-        )
-        .first()
-    )
+    db_user = _find_login_user(db, identifier)
 
     if not db_user:
         _equalize_timing(password)

@@ -50,11 +50,12 @@ import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.config.settings import settings
 from src.models.ai_usage import AiUsageDaily
+from src.models.user import User
 
 logger = logging.getLogger("AIEngineeringLab.quota")
 
@@ -79,6 +80,11 @@ class QuotaExceeded(Exception):
         if self.scope == "user":
             return "Your daily AI request limit has been reached. It resets at 00:00 UTC."
         return "The shared daily AI capacity has been reached. It resets at 00:00 UTC."
+
+
+class UserGone(Exception):
+    """The account was deleted while the request was in flight. No counter row is created
+    for it (that would leave an orphaned `user:<id>` row behind)."""
 
 
 class Settlement(enum.Enum):
@@ -159,6 +165,15 @@ def reserve(db: Session, user_id: int, tokens: int) -> QuotaReservation:
     day = utc_today()
     user_scope = f"user:{user_id}"
     try:
+        # Account deletion removes the user's counter rows and then the user, in one
+        # transaction. Taking a shared lock on the user row here makes the two serialise on
+        # PostgreSQL: a deletion in flight waits for this reservation to commit (and then
+        # removes the row we create), and a deletion that already committed is seen here, so
+        # no counter row is ever created for an account that no longer exists.
+        # (SQLite has no row locks; it serialises whole writes, and the existence check holds.)
+        if db.execute(select(User.id).where(User.id == user_id).with_for_update(read=True)).first() is None:
+            db.rollback()
+            raise UserGone()
         _ensure_row(db, user_scope, day)
         _ensure_row(db, GLOBAL_SCOPE, day)
 
@@ -190,7 +205,7 @@ def reserve(db: Session, user_id: int, tokens: int) -> QuotaReservation:
             raise QuotaExceeded("global", seconds_until_utc_midnight())
 
         db.commit()
-    except QuotaExceeded:
+    except (QuotaExceeded, UserGone):
         raise
     except Exception:
         db.rollback()

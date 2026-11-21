@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     AI_DAILY_TOKENS_GLOBAL: int = Field(default=150000, ge=1)
     # Concurrent /ai/chat/stream responses per process (in memory, reset on restart).
     AI_MAX_CONCURRENT_STREAMS: int = Field(default=3, ge=1)
+    # Concurrent streams one account may hold, so a single user cannot take every slot.
+    AI_MAX_CONCURRENT_STREAMS_PER_USER: int = Field(default=1, ge=1)
     # How many reverse proxies in front of the app append to X-Forwarded-For.
     # 0 = ignore the header and use the socket peer address (safe default; behind a
     # proxy every client then shares the proxy's bucket). N > 0 = take the Nth entry

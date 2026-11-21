@@ -15,6 +15,7 @@ Nothing here changes a production setting; it is the reference for deciding to.
 | `AI_DAILY_TOKENS_GLOBAL` | 150,000 | all users per UTC day (reserved up front, settled on measured usage) | HTTP 429 |
 | `RATE_LIMIT_AI_PER_MINUTE` | 10 | per account | HTTP 429 |
 | `AI_MAX_CONCURRENT_STREAMS` | 3 | whole process | HTTP 429 before any provider call |
+| `AI_MAX_CONCURRENT_STREAMS_PER_USER` | 1 | per account | HTTP 429 "You already have an AI response in progress"; one user can never take more than one of the 3 slots |
 | `RATE_LIMIT_AUTH_PER_MINUTE` | 10 | per client address, login and register counted separately | HTTP 429 |
 | Stream lease | 300 s idle, 600 s absolute | per stream | stream ends with a `timeout` marker |
 | DB pool | 5 + 5 overflow | per process | queueing up to `DB_POOL_TIMEOUT` (30 s) |

@@ -48,6 +48,7 @@ Six of them only need a value. `SECRET_KEY` is stricter: besides being required,
 | `AI_DAILY_REQUESTS_GLOBAL` | 80 | database | Model requests per UTC day across all users. |
 | `AI_DAILY_TOKENS_GLOBAL` | 150000 | database | Tokens per UTC day across all users. There is no per-user token setting. |
 | `AI_MAX_CONCURRENT_STREAMS` | 3 | process memory | Simultaneous `/ai/chat/stream` responses. Excess streams get HTTP 429 with `Retry-After: 5`. |
+| `AI_MAX_CONCURRENT_STREAMS_PER_USER` | 1 | process memory | Simultaneous `/ai/chat/stream` responses one account may hold. A second one gets HTTP 429 before any provider call or quota use. Keep it below `AI_MAX_CONCURRENT_STREAMS` so one user cannot take every slot. |
 | `TRUSTED_PROXY_COUNT` | 0 | n/a | How many reverse proxies in front of the app write `X-Forwarded-For`. See below. |
 | `TRUSTED_CLIENT_IP_HEADER` | empty | n/a | Optional, Railway only. Empty (default) trusts no client-address header. The only other accepted value is `x-real-ip` (any letter case); anything else stops the app at startup. See below. |
 

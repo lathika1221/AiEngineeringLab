@@ -208,11 +208,19 @@ def stream_chat(request: ChatRequest, db: Session = Depends(get_db), current_use
     memories = get_memories(db=db, user=current_user)
     context = build_request_context(db=db, user=current_user, project_id=effective_project_id)
 
-    slot = stream_limiter.acquire(settings.AI_MAX_CONCURRENT_STREAMS)
+    slot, denied = stream_limiter.try_acquire(
+        settings.AI_MAX_CONCURRENT_STREAMS,
+        owner=user_id,
+        max_per_owner=settings.AI_MAX_CONCURRENT_STREAMS_PER_USER,
+    )
     if slot is None:
         raise HTTPException(
             status_code=429,
-            detail="Too many AI responses are in progress. Please try again in a few seconds.",
+            detail=(
+                "You already have an AI response in progress. Wait for it to finish."
+                if denied == "owner"
+                else "Too many AI responses are in progress. Please try again in a few seconds."
+            ),
             headers={"Retry-After": str(STREAM_BUSY_RETRY_AFTER_SECONDS)},
         )
     reservation = None

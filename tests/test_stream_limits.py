@@ -263,6 +263,7 @@ def test_quota_rejection_does_not_leak_a_slot(env, http, monkeypatch):
 
 def test_real_concurrent_streams_are_capped_and_all_slots_come_back(env, http, monkeypatch):
     monkeypatch.setattr(settings, "AI_MAX_CONCURRENT_STREAMS", 3)
+    monkeypatch.setattr(settings, "AI_MAX_CONCURRENT_STREAMS_PER_USER", 3)  # one test user: exercise the global cap
     gate = threading.Event()
 
     def stream(outcome=None, **kwargs):
@@ -597,3 +598,88 @@ def test_client_disconnect_saves_no_history_and_still_counts_the_generated_chunk
     assert saved_responses(env) == []                        # unchanged behaviour: nothing persisted on disconnect
     assert stream_limiter.active() == 0
     assert usage_of(env) == (1, (400 + 400) // 4)            # quota semantics unchanged
+
+
+# ------------------------------------------------------ per-owner cap (one user, one stream)
+def test_owner_cap_is_enforced_before_the_global_cap_and_reports_why():
+    lim = StreamLimiter()
+    a1, why = lim.try_acquire(3, owner="a", max_per_owner=1)
+    assert a1 is not None and why is None
+    assert lim.try_acquire(3, owner="a", max_per_owner=1) == (None, "owner")
+    b1, _ = lim.try_acquire(3, owner="b", max_per_owner=1)
+    c1, _ = lim.try_acquire(3, owner="c", max_per_owner=1)
+    assert b1 is not None and c1 is not None and lim.active() == 3
+    assert lim.try_acquire(3, owner="d", max_per_owner=1) == (None, "full")
+    assert lim.try_acquire(3, owner="a", max_per_owner=1) == (None, "owner")
+
+
+def test_one_owner_can_never_leave_fewer_than_n_minus_one_slots_for_others():
+    lim = StreamLimiter()
+    held = [lim.try_acquire(3, owner="greedy", max_per_owner=1)[0] for _ in range(10)]
+    assert sum(h is not None for h in held) == 1
+    assert lim.try_acquire(3, owner="x", max_per_owner=1)[0] is not None
+    assert lim.try_acquire(3, owner="y", max_per_owner=1)[0] is not None
+
+
+def test_releasing_frees_the_owner_and_double_release_does_not_free_another_streams_owner_slot():
+    lim = StreamLimiter()
+    first, _ = lim.try_acquire(3, owner="a", max_per_owner=1)
+    first.release()
+    second, _ = lim.try_acquire(3, owner="a", max_per_owner=1)
+    assert second is not None
+    first.release()  # stale handle: must not free the new slot
+    assert lim.try_acquire(3, owner="a", max_per_owner=1) == (None, "owner")
+    second.release()
+    assert lim.try_acquire(3, owner="a", max_per_owner=1)[0] is not None
+
+
+def test_expired_lease_and_max_duration_free_the_owner_too():
+    clock = FakeClock()
+    lim = StreamLimiter(clock=clock, lease_seconds=10, max_stream_seconds=30)
+    lim.try_acquire(3, owner="a", max_per_owner=1)
+    assert lim.try_acquire(3, owner="a", max_per_owner=1)[1] == "owner"
+    clock.now = 11  # idle lease passed: the dead stream no longer pins the owner
+    slot, _ = lim.try_acquire(3, owner="a", max_per_owner=1)
+    assert slot is not None
+    clock.now = 20
+    assert slot.renew()
+    clock.now = 45  # over the absolute maximum: renew fails and the owner is freed
+    assert slot.renew() is False
+    assert lim.try_acquire(3, owner="a", max_per_owner=1)[0] is not None
+
+
+def test_owner_accounting_is_exact_under_thread_contention():
+    lim = StreamLimiter()
+    results, lock = [], threading.Lock()
+
+    def worker(owner):
+        for _ in range(200):
+            slot, _ = lim.try_acquire(30, owner=owner, max_per_owner=1)
+            if slot is not None:
+                with lock:
+                    results.append(owner)
+                time.sleep(0)
+                slot.release()
+                with lock:
+                    results.remove(owner)
+
+    threads = [threading.Thread(target=worker, args=(f"u{i % 4}",)) for i in range(16)]
+    [t.start() for t in threads]
+    [t.join(30) for t in threads]
+    assert lim.active() == 0 and lim._owners == {}
+
+
+def test_owner_is_freed_when_a_streaming_generator_is_cancelled(env, monkeypatch):
+    db = env.Session()
+    user = db.get(User, env.user_id)
+    monkeypatch.setattr(ai_routes, "stream_chat_with_ai", chunks_then("a", "b"))
+    reservation = quota.reserve(db, env.user_id, 6500)
+    slot, _ = stream_limiter.try_acquire(3, owner=env.user_id, max_per_owner=1)
+    gen = ai_routes.generate_stream(db, user, ChatRequest(message="hi"), None, [], [], {}, slot, reservation)
+    next(gen)
+    assert stream_limiter.try_acquire(3, owner=env.user_id, max_per_owner=1) == (None, "owner")
+    gen.close()  # client went away
+    slot2, _ = stream_limiter.try_acquire(3, owner=env.user_id, max_per_owner=1)
+    assert slot2 is not None
+    slot2.release()
+    assert stream_limiter.active() == 0

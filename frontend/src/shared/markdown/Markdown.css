@@ -1,0 +1,276 @@
+.markdown {
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown blockquote,
+.markdown .table-wrap,
+.markdown .code-block,
+.markdown img {
+  margin: 0 0 0.9em;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 1.4em 0 0.5em;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.markdown h1 {
+  font-size: 1.3em;
+}
+
+.markdown h2 {
+  font-size: 1.18em;
+}
+
+.markdown h3 {
+  font-size: 1.07em;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.5em;
+}
+
+.markdown li + li,
+.markdown li > ul,
+.markdown li > ol {
+  margin-top: 0.3em;
+}
+
+.markdown li > ul,
+.markdown li > ol {
+  margin-bottom: 0;
+}
+
+.markdown li > p {
+  margin-bottom: 0.4em;
+}
+
+/* GFM task lists */
+.markdown li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.3em;
+}
+
+.markdown input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--accent-strong);
+}
+
+.markdown blockquote {
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--accent-line);
+  color: var(--text-secondary);
+}
+
+.markdown blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+}
+
+.markdown img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 420px;
+  border-radius: var(--radius-md);
+}
+
+.markdown hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown code {
+  padding: 0.12em 0.4em;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Tables: scroll sideways instead of crushing columns ---------- */
+
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+
+/* Prose cells wrap; a cell is never narrower than 12ch, and code cells keep their
+   lines whole. Only when those minimums do not fit does the table scroll sideways. */
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table-wrap th,
+.table-wrap td {
+  min-width: 12ch;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.table-wrap th + th,
+.table-wrap td + td {
+  border-left: 1px solid var(--border);
+}
+
+.table-wrap tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-wrap th {
+  background: var(--bg-inset);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Code that was written as a fenced block inside a table cell. */
+.markdown .cell-code {
+  display: block;
+  min-width: 24ch;
+  padding: 8px 10px;
+  border: 1px solid rgba(140, 170, 220, 0.16);
+  border-radius: var(--radius-sm);
+  background: #050a14;
+  color: #dbe6f7;
+  line-height: 1.55;
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+/* ---------- Code blocks (always dark, in both themes) ---------- */
+
+.code-block,
+.cell-code {
+  --tok-comment: #6f84a8;
+  --tok-string: #8fd6a3;
+  --tok-number: #f2b97a;
+  --tok-keyword: #7fb2ff;
+  --tok-variable: #e6c07b;
+  --tok-function: #c4a7ff;
+  --tok-property: #7fd4e6;
+}
+
+.code-block {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: #050a14;
+  color: #dbe6f7;
+}
+
+.code-block__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 6px 4px 14px;
+  border-bottom: 1px solid rgba(140, 170, 220, 0.16);
+  color: #8fa3c4;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.code-block__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+}
+
+.code-block__copy:hover {
+  background: rgba(140, 170, 220, 0.14);
+  color: #fff;
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  tab-size: 4;
+}
+
+.markdown .code-block code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  overflow-wrap: normal;
+}
+
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+
+.tok-string {
+  color: var(--tok-string);
+}
+
+.tok-number {
+  color: var(--tok-number);
+}
+
+.tok-keyword {
+  color: var(--tok-keyword);
+}
+
+.tok-variable {
+  color: var(--tok-variable);
+}
+
+.tok-function {
+  color: var(--tok-function);
+}
+
+.tok-property {
+  color: var(--tok-property);
+}
+
+.markdown .image-missing {
+  color: var(--text-muted);
+  font-style: italic;
+}

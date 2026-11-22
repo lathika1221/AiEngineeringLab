@@ -1,12 +1,29 @@
-import { useState } from "react";
+import { useId, useState } from "react";
+import type { FormEvent } from "react";
+import { ArrowLeft } from "lucide-react";
+import { API_BASE } from "../../shared/api/client";
+import { submitLogin } from "./loginRequest";
+import { submitRegister } from "./registerRequest";
+import { MIN_PASSWORD_LENGTH, validateRegistration } from "./registerRules";
+import { usePageTitle } from "../../shared/hooks/usePageTitle";
+import WolfHead from "../../shared/brand/WolfHead";
+import Button from "../../shared/ui/Button";
+import Notice from "../../shared/ui/Notice";
 import "./Auth.css";
 
+type AuthMode = "login" | "register";
+
 type AuthProps = {
-    onLogin: () => void;
+    /** Which form is showing. Owned by the route (/login or /register). */
+    mode: AuthMode;
+    onModeChange: (mode: AuthMode) => void;
+    /** Receives the access token after a successful sign in. */
+    onLogin: (token: string) => void;
+    onBack?: () => void;
 };
 
-export default function Auth({ onLogin }: AuthProps) {
-    const [mode, setMode] = useState<"login" | "register">("login");
+export default function Auth({ mode, onModeChange, onLogin, onBack }: AuthProps) {
+    usePageTitle(mode === "login" ? "Sign in" : "Create account");
 
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
@@ -16,8 +33,12 @@ export default function Auth({ onLogin }: AuthProps) {
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
 
-    function switchMode(nextMode: "login" | "register") {
-        setMode(nextMode);
+    const usernameId = useId();
+    const emailId = useId();
+    const passwordId = useId();
+
+    function switchMode(nextMode: AuthMode) {
+        onModeChange(nextMode);
         setError("");
         setSuccess("");
         setPassword("");
@@ -34,69 +55,24 @@ export default function Auth({ onLogin }: AuthProps) {
         setSuccess("");
 
         try {
-            const formData = new URLSearchParams();
+            const result = await submitLogin(fetch, API_BASE, username.trim(), password);
 
-            formData.append("grant_type", "password");
-            formData.append("username", username.trim());
-            formData.append("password", password);
-
-            const response = await fetch(
-                "http://127.0.0.1:8000/auth/login",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type":
-                            "application/x-www-form-urlencoded",
-                    },
-                    body: formData,
-                },
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    "Invalid username or password.",
-                );
+            if (!result.ok) {
+                setError(result.message);
+                return;
             }
 
-            const data = await response.json();
-
-            localStorage.setItem(
-                "access_token",
-                data.access_token,
-            );
-
-            onLogin();
-        } catch (error) {
-            setError(
-                error instanceof Error
-                    ? error.message
-                    : "Login failed.",
-            );
+            onLogin(result.token);
         } finally {
             setLoading(false);
         }
     }
 
     async function register() {
-        if (!username.trim()) {
-            setError("Enter a username.");
-            return;
-        }
+        const problem = validateRegistration({ username, email, password });
 
-        if (!email.trim()) {
-            setError("Enter your email address.");
-            return;
-        }
-
-        if (!password) {
-            setError("Create a password.");
-            return;
-        }
-
-        if (password.length < 8) {
-            setError(
-                "Password must contain at least 8 characters.",
-            );
+        if (problem) {
+            setError(problem);
             return;
         }
 
@@ -105,210 +81,147 @@ export default function Auth({ onLogin }: AuthProps) {
         setSuccess("");
 
         try {
-            const response = await fetch(
-                "http://127.0.0.1:8000/auth/register",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        username: username.trim(),
-                        email: email.trim(),
-                        password,
-                    }),
-                },
-            );
+            const result = await submitRegister(fetch, API_BASE, { username, email, password });
 
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(
-                    data.detail ||
-                    "Unable to create your account.",
-                );
+            if (!result.ok) {
+                setError(result.message);
+                return;
             }
 
-            setMode("login");
+            onModeChange("login");
             setPassword("");
 
-            setSuccess(
-                "Account created successfully. You can sign in now.",
-            );
-        } catch (error) {
-            setError(
-                error instanceof Error
-                    ? error.message
-                    : "Registration failed.",
-            );
+            setSuccess("Account created successfully. You can sign in now.");
         } finally {
             setLoading(false);
         }
     }
 
-    function handleKeyDown(
-        event: React.KeyboardEvent<HTMLInputElement>,
-    ) {
-        if (event.key === "Enter") {
-            if (mode === "login") {
-                login();
-            } else {
-                register();
-            }
+    function handleSubmit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        if (loading) {
+            return;
+        }
+
+        if (mode === "login") {
+            void login();
+        } else {
+            void register();
         }
     }
 
     return (
-        <main className="auth-page">
-            <section className="auth-card">
-                <div className="auth-mark">
-                    🐺
+        <main className="guest">
+            {onBack && (
+                <button type="button" className="guest__back" onClick={onBack}>
+                    <ArrowLeft size={15} aria-hidden="true" />
+                    Back
+                </button>
+            )}
+
+            <section className="guest__card panel panel--lit">
+                <div className="auth-brand">
+                    <WolfHead size={64} mood={error ? "error" : loading ? "thinking" : "idle"} />
+                    <span className="auth-brand__name">LATZ</span>
                 </div>
 
-                <span className="auth-eyebrow">
-                    AIENGINEERINGLAB
-                </span>
-
-                <h1>
-                    {mode === "login"
-                        ? "Welcome back."
-                        : "Create your workspace."}
+                <h1 className="auth-title">
+                    {mode === "login" ? "Welcome back" : "Create your workspace"}
                 </h1>
 
                 <p className="auth-description">
                     {mode === "login"
                         ? "Sign in to continue working with LATZ."
-                        : "Create your account and start building with LATZ."}
+                        : "Create an account to start building with LATZ."}
                 </p>
 
-                <div className="auth-mode-switch">
+                <div className="auth-switch" role="tablist" aria-label="Account">
                     <button
                         type="button"
-                        className={
-                            mode === "login"
-                                ? "active"
-                                : ""
-                        }
-                        onClick={() =>
-                            switchMode("login")
-                        }
+                        role="tab"
+                        aria-selected={mode === "login"}
+                        className={mode === "login" ? "active" : ""}
+                        onClick={() => switchMode("login")}
                     >
                         Sign in
                     </button>
 
                     <button
                         type="button"
-                        className={
-                            mode === "register"
-                                ? "active"
-                                : ""
-                        }
-                        onClick={() =>
-                            switchMode("register")
-                        }
+                        role="tab"
+                        aria-selected={mode === "register"}
+                        className={mode === "register" ? "active" : ""}
+                        onClick={() => switchMode("register")}
                     >
                         Create account
                     </button>
                 </div>
 
-                <div className="auth-form">
-                    <label>
-                        Username
-                    </label>
-
-                    <input
-                        value={username}
-                        onChange={(event) =>
-                            setUsername(
-                                event.target.value,
-                            )
-                        }
-                        onKeyDown={handleKeyDown}
-                        placeholder="Choose a username"
-                        autoComplete="username"
-                    />
+                <form className="auth-form" onSubmit={handleSubmit} noValidate>
+                    <div className="field">
+                        <label className="field__label" htmlFor={usernameId}>
+                            Username
+                        </label>
+                        <input
+                            id={usernameId}
+                            className="input"
+                            value={username}
+                            onChange={(event) => setUsername(event.target.value)}
+                            placeholder={mode === "register" ? "Choose a username" : "Your username"}
+                            autoComplete="username"
+                        />
+                    </div>
 
                     {mode === "register" && (
-                        <>
-                            <label>
+                        <div className="field">
+                            <label className="field__label" htmlFor={emailId}>
                                 Email
                             </label>
-
                             <input
+                                id={emailId}
+                                className="input"
                                 type="email"
                                 value={email}
-                                onChange={(event) =>
-                                    setEmail(
-                                        event.target.value,
-                                    )
-                                }
-                                onKeyDown={
-                                    handleKeyDown
-                                }
-                                placeholder="Enter your email"
+                                onChange={(event) => setEmail(event.target.value)}
+                                placeholder="you@example.com"
                                 autoComplete="email"
                             />
-                        </>
-                    )}
-
-                    <label>
-                        Password
-                    </label>
-
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(event) =>
-                            setPassword(
-                                event.target.value,
-                            )
-                        }
-                        onKeyDown={handleKeyDown}
-                        placeholder={
-                            mode === "register"
-                                ? "Create a password"
-                                : "Enter your password"
-                        }
-                        autoComplete={
-                            mode === "register"
-                                ? "new-password"
-                                : "current-password"
-                        }
-                    />
-
-                    {error && (
-                        <div className="auth-error">
-                            {error}
                         </div>
                     )}
 
-                    {success && (
-                        <div className="auth-success">
-                            {success}
-                        </div>
-                    )}
+                    <div className="field">
+                        <label className="field__label" htmlFor={passwordId}>
+                            Password
+                            {mode === "register" && (
+                                <span className="field__hint">At least {MIN_PASSWORD_LENGTH} characters</span>
+                            )}
+                        </label>
+                        <input
+                            id={passwordId}
+                            className="input"
+                            type="password"
+                            value={password}
+                            onChange={(event) => setPassword(event.target.value)}
+                            placeholder={mode === "register" ? "Create a password" : "Your password"}
+                            autoComplete={mode === "register" ? "new-password" : "current-password"}
+                        />
+                    </div>
 
-                    <button
-                        onClick={
-                            mode === "login"
-                                ? login
-                                : register
-                        }
-                        disabled={loading}
-                    >
+                    {error && <Notice tone="error">{error}</Notice>}
+
+                    {success && <Notice tone="success">{success}</Notice>}
+
+                    <Button type="submit" variant="primary" size="lg" block busy={loading}>
                         {loading
                             ? mode === "login"
-                                ? "Signing in..."
-                                : "Creating account..."
+                                ? "Signing in"
+                                : "Creating account"
                             : mode === "login"
-                                ? "Sign in"
-                                : "Create account"}
-                    </button>
-                </div>
-
-                <div className="auth-footer">
-                    LATZ · Your engineering companion
-                </div>
+                              ? "Sign in"
+                              : "Create account"}
+                    </Button>
+                </form>
             </section>
         </main>
     );

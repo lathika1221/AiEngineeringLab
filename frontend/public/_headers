@@ -1,0 +1,19 @@
+# Cloudflare Pages response headers (applied to every route).
+#
+# Content-Security-Policy-Report-Only: observe-only. Nothing is blocked; violations
+# appear in the browser console (and, once a reporting endpoint is added, there).
+# Promote to an enforcing Content-Security-Policy only after a clean observation
+# period (see docs/DEPLOYMENT.md, "Content Security Policy").
+# The sha256 is the inline theme script in index.html; tests/csp.test.ts fails if the
+# script and this hash ever drift apart. style-src needs 'unsafe-inline' only for
+# React inline style attributes; it grants no script execution.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'sha256-JEziX/2H0Lz/8aSTabo+J1oBYbS5rka3NJ8jL68EINE='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://ael-backend-production.up.railway.app; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# Preview deployments (<hash>.latz-ai.pages.dev) must not be indexed.
+https://:version.latz-ai.pages.dev/*
+  X-Robots-Tag: noindex

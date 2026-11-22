@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from src.ai.usage import note_response
 from src.config.settings import settings
 from src.services.tool_registry import execute_tool, get_tool_definitions
 
@@ -24,6 +25,7 @@ def run_tool_calling(
             tool_choice="auto",
         )
 
+        note_response(response)
         assistant_message = response.choices[0].message
         tool_calls = assistant_message.tool_calls or []
 
@@ -74,6 +76,8 @@ def run_tool_calling(
         messages=conversation,
         max_tokens=1200,
     )
+
+    note_response(final_response)
 
     return final_response.choices[0].message.content or (
         "I couldn't complete the tool-assisted response within the execution limit."

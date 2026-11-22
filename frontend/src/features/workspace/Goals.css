@@ -1,0 +1,128 @@
+/* Goals page. Self-contained: route chunks load their own CSS. */
+
+.goal-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.goal-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+}
+
+.goal-card__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.goal-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.goal-card h2 svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.goal-card p {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.goal-card--done h2 {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
+
+.goal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 14px 0 0;
+}
+
+.goal-meta dt {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.goal-meta dd {
+  margin: 2px 0 0;
+  font-size: var(--text-sm);
+}
+
+.goal-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.goal-status {
+  width: auto;
+  min-width: 128px;
+}
+
+.goal-status--completed {
+  color: var(--success);
+}
+
+.goal-delete:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--error) 50%, transparent);
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.goal-form {
+  display: grid;
+  gap: 16px;
+}
+
+.goal-form__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.goal-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .goal-card {
+    flex-direction: column;
+  }
+
+  .goal-card__actions {
+    width: 100%;
+  }
+
+  .goal-status {
+    flex: 1;
+  }
+
+  .goal-form__row {
+    grid-template-columns: 1fr;
+  }
+}

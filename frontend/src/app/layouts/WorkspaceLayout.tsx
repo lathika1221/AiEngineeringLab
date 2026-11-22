@@ -1,278 +1,315 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import {
+    FlaskConical,
+    FolderKanban,
+    House,
+    LogOut,
+    Brain,
+    Menu,
+    MessagesSquare,
+    Moon,
+    Search,
+    Settings,
+    Target,
+    Sun,
+    UserRound,
+    X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import "./WorkspaceLayout.css";
-import MissionControl from "../../features/workspace/MissionControl";
-import EngineeringWorkspace from "../../features/workspace/EngineeringWorkspace";
-import type { WorkspaceWorkflow } from "../../features/workspace/EngineeringWorkspace";
-import Chat from "../../features/chat/Chat";
+import { useSession } from "../session/context";
+import AccountMenu from "../../features/account/AccountMenu";
+import { queueWorkflow } from "../workflow";
+import { API_BASE } from "../../shared/api/client";
+import { useApiResource } from "../../shared/api/resources";
+import type { Conversation, Project } from "../../shared/api/types";
+import { useBackendStatus } from "../../shared/api/useBackendStatus";
+import WolfHead from "../../shared/brand/WolfHead";
+import Wordmark from "../../shared/brand/Wordmark";
+import ErrorBoundary from "../../shared/ui/ErrorBoundary";
 import CommandBar from "../../shared/components/CommandBar";
-
-type WorkspaceLayoutProps = {
-    onLogout: () => void;
-};
-
-export type WorkspaceAction =
-    | "forge"
-    | "learn"
-    | "research"
-    | "explore"
-    | "solve"
-    | "projects"
-    | "experiment";
-
-type View = "mission" | "chat" | "workspace";
+import type { Command } from "../../shared/components/CommandBar";
+import { engineeringModes } from "../../shared/config/engineeringModes";
+import { toggleTheme, useTheme } from "../../shared/theme/theme";
 
 type NavigationItem = {
+    id: string;
     label: string;
-    description: string;
-    icon: string;
-    onClick: () => void;
-    active: boolean;
+    hint: string;
+    icon: LucideIcon;
+    to: string;
 };
 
-export default function WorkspaceLayout({ onLogout }: WorkspaceLayoutProps) {
-    const [view, setView] = useState<View>("mission");
-    const [displayName, setDisplayName] = useState("User");
-    const [workspaceAction, setWorkspaceAction] = useState<WorkspaceAction>("forge");
-    const [workflow, setWorkflow] = useState<WorkspaceWorkflow | null>(null);
+const STATUS_LABEL = {
+    checking: "Checking",
+    online: "Connected",
+    offline: "Offline",
+} as const;
+
+const STATUS_CLASS = {
+    checking: "status--busy",
+    online: "status--ok",
+    offline: "status--error",
+} as const;
+
+const PRIMARY_ITEMS: NavigationItem[] = [
+    { id: "mission", label: "Mission Control", hint: "Overview", icon: House, to: "/mission-control" },
+    { id: "chat", label: "LATZ Chat", hint: "Conversations", icon: MessagesSquare, to: "/chat" },
+    { id: "projects", label: "Projects", hint: "Saved work", icon: FolderKanban, to: "/projects" },
+    { id: "goals", label: "Goals", hint: "Objectives", icon: Target, to: "/goals" },
+    { id: "memories", label: "Memories", hint: "What LATZ knows", icon: Brain, to: "/memories" },
+    { id: "experiments", label: "Experiments", hint: "Lab", icon: FlaskConical, to: "/experiments" },
+];
+
+const MODE_ITEMS: NavigationItem[] = engineeringModes.map((mode) => ({
+    id: mode.id,
+    label: mode.title,
+    hint: "Engineering mode",
+    icon: mode.icon,
+    to: `/${mode.id}`,
+}));
+
+const ALL_ITEMS = [...PRIMARY_ITEMS, ...MODE_ITEMS];
+
+/** Pages reached from the account menu rather than the sidebar. */
+const ACCOUNT_ITEMS: NavigationItem[] = [
+    { id: "profile", label: "My Profile", hint: "Account", icon: UserRound, to: "/profile" },
+    { id: "settings", label: "Account Settings", hint: "Account", icon: Settings, to: "/settings" },
+];
+
+/** The workspace shell: sidebar, header and command bar around the current route's page. */
+export default function WorkspaceLayout() {
+    const { logout } = useSession();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const [menuOpenAt, setMenuOpenAt] = useState<string | null>(null);
+    const [commandBarOpen, setCommandBarOpen] = useState(false);
+
+    const theme = useTheme();
+    const backendStatus = useBackendStatus();
+
+    // The mobile drawer is open only for the page it was opened on, so any navigation closes it.
+    const menuOpen = menuOpenAt === location.key;
+    const section = location.pathname.split("/")[1] ?? "";
+    const isChat = section === "chat";
 
     useEffect(() => {
-        async function loadProfile() {
-            const token = localStorage.getItem("access_token");
-
-            if (!token) return;
-
-            try {
-                const response = await fetch("http://127.0.0.1:8000/users/profile", {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
-
-                if (!response.ok) return;
-
-                const profile = await response.json();
-
-                if (profile.display_name) {
-                    setDisplayName(profile.display_name);
-                }
-            } catch {
-                setDisplayName("User");
+        function handleShortcut(event: KeyboardEvent) {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+                event.preventDefault();
+                setCommandBarOpen((open) => !open);
             }
         }
 
-        loadProfile();
+        window.addEventListener("keydown", handleShortcut);
+        return () => window.removeEventListener("keydown", handleShortcut);
     }, []);
 
-    function openWorkspace(action: WorkspaceAction) {
-        setWorkspaceAction(action);
-        setWorkflow(null);
-        setView("workspace");
-    }
+    const activeItem = [...ALL_ITEMS, ...ACCOUNT_ITEMS].find((item) => item.to === `/${section}`);
+    const currentTitle = activeItem?.label ?? "LATZ";
+    const ThemeIcon = theme === "dark" ? Sun : Moon;
+    const themeLabel = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
 
-    function openChat() {
-        setWorkflow(null);
-        setView("chat");
-    }
+    const projectList = useApiResource<Project[]>(commandBarOpen ? "/projects" : null);
+    const conversationList = useApiResource<Conversation[]>(commandBarOpen ? "/conversations" : null);
 
-    function openWorkflow(selectedWorkflow: WorkspaceWorkflow) {
-        setWorkflow(selectedWorkflow);
-        setView("chat");
-    }
-
-    function openSavedProject(project: { id: number; name: string }) {
-        setWorkflow({
-            engine: "forge",
-            action: "design_architecture",
-            label: `Let's continue working on ${project.name}. Use the saved project context and help me identify the next implementation step.`,
-            projectId: project.id,
-        });
-        setView("chat");
-    }
-
-    useEffect(() => {
-        function handleExperimentsBack() {
-            setWorkflow(null);
-            setView("mission");
-        }
-
-        window.addEventListener("latz:experiments-back", handleExperimentsBack);
-        return () => window.removeEventListener("latz:experiments-back", handleExperimentsBack);
-    }, []);
-    function openMission() {
-        setWorkflow(null);
-        setView("mission");
-    }
-
-    const workspaceTitle =
-        workspaceAction.charAt(0).toUpperCase() + workspaceAction.slice(1);
-
-    const navigationItems: NavigationItem[] = [
+    const commands: Command[] = [
+        ...[...ALL_ITEMS, ...ACCOUNT_ITEMS].map((item) => ({
+            id: item.id,
+            label: `Go to ${item.label}`,
+            hint: item.hint,
+            icon: item.icon,
+            run: () => navigate(item.to),
+        })),
+        ...(projectList.data ?? []).map((project) => ({
+            id: `project-${project.id}`,
+            label: `Project: ${project.name}`,
+            hint: "Open details",
+            icon: FolderKanban,
+            searchOnly: true,
+            run: () => navigate(`/projects/${project.id}`),
+        })),
+        ...(conversationList.data ?? []).map((conversation) => ({
+            id: `conversation-${conversation.id}`,
+            label: `Chat: ${conversation.title}`,
+            hint: "Open conversation",
+            icon: MessagesSquare,
+            searchOnly: true,
+            run: () => navigate(`/chat/${conversation.id}`),
+        })),
         {
-            label: "Mission Control",
-            description: "Your overview",
-            icon: "⌂",
-            onClick: openMission,
-            active: view === "mission",
+            id: "theme",
+            label: themeLabel,
+            hint: "Appearance",
+            icon: ThemeIcon,
+            run: toggleTheme,
         },
         {
-            label: "Chat with LATZ",
-            description: "Think it through",
-            icon: "◌",
-            onClick: openChat,
-            active: view === "chat",
-        },
-        {
-            label: "Build workspace",
-            description: "Design and develop",
-            icon: "⌘",
-            onClick: () => openWorkspace("forge"),
-            active: view === "workspace" && workspaceAction === "forge",
-        },
-        {
-            label: "Projects",
-            description: "Your project space",
-            icon: "▧",
-            onClick: () => openWorkspace("projects"),
-            active: view === "workspace" && workspaceAction === "projects",
-        },
-        {
-            label: "Experiments",
-            description: "Test new ideas",
-            icon: "⌬",
-            onClick: () => openWorkspace("experiment"),
-            active: view === "workspace" && workspaceAction === "experiment",
+            id: "sign-out",
+            label: "Sign out",
+            hint: "Account",
+            icon: LogOut,
+            run: logout,
         },
     ];
 
-    const currentTitle =
-        view === "chat"
-            ? "Chat with LATZ"
-            : view === "workspace"
-              ? workspaceTitle
-              : "Mission Control";
+    function renderNavItem(item: NavigationItem) {
+        const Icon = item.icon;
+
+        return (
+            <NavLink
+                key={item.id}
+                to={item.to}
+                className={({ isActive }) => `sidebar-nav-item${isActive ? " active" : ""}`}
+            >
+                <Icon size={17} aria-hidden="true" />
+                <span>{item.label}</span>
+            </NavLink>
+        );
+    }
 
     return (
         <div className="workspace-layout">
-            <aside className="app-sidebar">
-                <button
-                    type="button"
-                    className="sidebar-brand"
-                    onClick={openMission}
-                    aria-label="Go to Mission Control"
-                >
-                    <span className="sidebar-brand-mark">🐺</span>
-                    <span className="sidebar-brand-copy">
-                        <strong>AIEngineeringLab</strong>
-                        <small>YOUR ENGINEERING SPACE</small>
-                    </span>
-                </button>
-
-                <div className="sidebar-section-label">WORKSPACE</div>
+            <a className="skip-link" href="#main-content">
+                Skip to content
+            </a>
+            <aside
+                className={`app-sidebar${menuOpen ? " open" : ""}`}
+                data-theme="dark"
+                aria-label="Workspace"
+            >
+                <div className="sidebar-top">
+                    <NavLink
+                        className="sidebar-brand"
+                        to="/mission-control"
+                        aria-label="LATZ AI Engineering Lab, go to Mission Control"
+                    >
+                        <Wordmark descriptor mood={backendStatus === "offline" ? "offline" : "idle"} />
+                    </NavLink>
+                    <button
+                        type="button"
+                        className="icon-btn sidebar-close"
+                        onClick={() => setMenuOpenAt(null)}
+                        aria-label="Close menu"
+                    >
+                        <X size={17} />
+                    </button>
+                </div>
 
                 <nav className="sidebar-navigation" aria-label="Main navigation">
-                    {navigationItems.map((item) => (
-                        <button
-                            key={item.label}
-                            type="button"
-                            className={`sidebar-nav-item${item.active ? " active" : ""}`}
-                            onClick={item.onClick}
-                            aria-current={item.active ? "page" : undefined}
-                        >
-                            <span className="sidebar-nav-icon" aria-hidden="true">
-                                {item.icon}
-                            </span>
-                            <span className="sidebar-nav-copy">
-                                <strong>{item.label}</strong>
-                                <small>{item.description}</small>
-                            </span>
-                            {item.active && <span className="sidebar-active-indicator" />}
-                        </button>
-                    ))}
+                    <div className="sidebar-section-label">Workspace</div>
+                    {PRIMARY_ITEMS.map(renderNavItem)}
+
+                    <div className="sidebar-section-label">Engineering modes</div>
+                    {MODE_ITEMS.map(renderNavItem)}
                 </nav>
 
-                <div className="sidebar-bottom">
-                    <div className="sidebar-status-card">
-                        <span className="sidebar-status-icon">✦</span>
-                        <div>
-                            <strong>LATZ is ready</strong>
-                            <p>Your engineering companion</p>
-                        </div>
-                        <span className="status-dot" />
-                    </div>
-
-                    <div className="sidebar-user">
-                        <span className="sidebar-avatar" aria-hidden="true">
-                            {displayName.trim().charAt(0).toUpperCase() || "U"}
-                        </span>
-                        <span className="sidebar-user-copy">
-                            <strong>{displayName}</strong>
-                            <small>Personal workspace</small>
-                        </span>
-                        <button
-                            type="button"
-                            className="sidebar-signout"
-                            onClick={onLogout}
-                            aria-label="Sign out"
-                            title="Sign out"
-                        >
-                            ↗
-                        </button>
-                    </div>
+                <div className="sidebar-user">
+                    <AccountMenu variant="sidebar" />
                 </div>
             </aside>
 
+            {menuOpen && (
+                <button
+                    type="button"
+                    className="sidebar-scrim"
+                    aria-label="Close menu"
+                    onClick={() => setMenuOpenAt(null)}
+                />
+            )}
+
             <div className="workspace-main">
                 <header className="workspace-topbar">
-                    <div className="topbar-page">
-                        <span className="topbar-breadcrumb">LATZ</span>
-                        <span className="topbar-separator">/</span>
-                        <h1>{currentTitle}</h1>
-                    </div>
+                    <button
+                        type="button"
+                        className="icon-btn topbar-menu"
+                        onClick={() => setMenuOpenAt(location.key)}
+                        aria-label="Open menu"
+                    >
+                        <Menu size={18} />
+                    </button>
+
+                    <p className="topbar-title display">{currentTitle}</p>
 
                     <div className="topbar-actions">
-                        <div className="connection-status">
-                            <span />
-                            Connected
-                        </div>
-                        <div className="topbar-profile">
-                            <span className="topbar-profile-avatar" aria-hidden="true">
-                                {displayName.trim().charAt(0).toUpperCase() || "U"}
-                            </span>
-                            <span>{displayName}</span>
-                        </div>
                         <button
                             type="button"
-                            className="topbar-signout"
-                            onClick={onLogout}
+                            className="command-trigger"
+                            onClick={() => setCommandBarOpen(true)}
                         >
-                            Sign out
+                            <Search size={15} aria-hidden="true" />
+                            <span>Search or ask LATZ</span>
+                            <kbd>Ctrl K</kbd>
                         </button>
+
+                        <span
+                            className={`status ${STATUS_CLASS[backendStatus]} topbar-status`}
+                            role="status"
+                            title={`Backend: ${API_BASE}`}
+                        >
+                            <span className="status__dot" />
+                            {STATUS_LABEL[backendStatus]}
+                        </span>
+
+                        <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={toggleTheme}
+                            aria-label={themeLabel}
+                            title={themeLabel}
+                        >
+                            <ThemeIcon size={17} />
+                        </button>
+
+                        <AccountMenu variant="header" />
                     </div>
                 </header>
 
-                <main className={`workspace-content workspace-view-${view}`}>
-                    {view === "chat" ? (
-                        <Chat
-                            onLogout={onLogout}
-                            initialWorkflow={workflow}
-                            projectId={workflow?.projectId ?? null}
-                            onOpenProject={openSavedProject}
-                        />
-                    ) : view === "workspace" ? (
-                        <EngineeringWorkspace
-                            mode={workspaceAction}
-                            onBack={openMission}
-                            onAction={openWorkflow}
-                        />
-                    ) : (
-                        <MissionControl
-                            workspaceAction={workspaceAction}
-                            onWorkspaceAction={openWorkspace}
-                            onAskLatz={openChat}
-                        />
-                    )}
+                <main id="main-content" tabIndex={-1} className={`workspace-content${isChat ? " workspace-view-chat" : ""}`}>
+                    {/* Keyed by section, so /chat → /chat/42 keeps the chat mounted. */}
+                    <motion.div
+                        key={section}
+                        className="workspace-page"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                    >
+                        <ErrorBoundary key={section}>
+                            <Suspense
+                                fallback={
+                                    <div className="page-loading" role="status">
+                                        <WolfHead size={48} mood="thinking" />
+                                        <span className="visually-hidden">Loading</span>
+                                    </div>
+                                }
+                            >
+                                <Outlet />
+                            </Suspense>
+                        </ErrorBoundary>
+                    </motion.div>
                 </main>
-
-                {view !== "chat" && <CommandBar />}
             </div>
+
+            <AnimatePresence>
+                {commandBarOpen && (
+                    <CommandBar
+                        commands={commands}
+                        onClose={() => setCommandBarOpen(false)}
+                        onAsk={(question) =>
+                            navigate(
+                                queueWorkflow({
+                                    engine: null,
+                                    action: "",
+                                    label: question,
+                                    fresh: true,
+                                }),
+                            )
+                        }
+                    />
+                )}
+            </AnimatePresence>
         </div>
     );
 }

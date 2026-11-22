@@ -1,36 +1,85 @@
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.auth.hash import hash_password
 from src.auth.hash import verify_password
-from src.auth.jwt import create_access_token
+from src.auth.jwt import create_access_token, password_fingerprint
 from src.models.user import User
-from src.schemas.user import UserCreate
+from src.schemas.user import UserCreate, normalize_email
 
 
 def create_user(db: Session, user: UserCreate):
+    # E-mail is compared case-insensitively (legacy rows may hold mixed case) and stored in
+    # lower case. Also refuse when the new e-mail equals an existing username or the new
+    # username equals an existing e-mail, so no two accounts can ever answer to the same
+    # login identifier (the schema already forbids '@' in usernames; this guards legacy
+    # rows and any caller that bypasses the schema).
+    email = normalize_email(user.email)
+
     existing = (
         db.query(User)
         .filter(
-            (User.email == user.email)
+            (func.lower(User.email) == email)
             | (User.username == user.username)
+            | (User.username == email)
+            | (func.lower(User.email) == user.username.lower())
         )
         .first()
     )
 
-    if existing:
+    if existing or "@" in user.username:
         return None
 
     new_user = User(
         username=user.username,
-        email=user.email,
+        email=email,
         hashed_password=hash_password(user.password),
     )
 
     db.add(new_user)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two simultaneous registrations for the same name or address: the database's
+        # unique constraints decide, and the loser gets the normal "already exists" answer.
+        db.rollback()
+        return None
+
     db.refresh(new_user)
 
     return new_user
+
+
+_timing_hash: str | None = None
+
+
+def _equalize_timing(password: str) -> None:
+    """Spend the same bcrypt work for an unknown account as for a known one, so
+    response time does not reveal whether an account exists."""
+    global _timing_hash
+    if _timing_hash is None:
+        _timing_hash = hash_password("latz-timing-equalisation-only")
+    verify_password(password, _timing_hash)
+
+
+def _find_login_user(db: Session, identifier: str):
+    """Deterministic identifier resolution: an e-mail match (case-insensitive, lowest id if
+    legacy rows differ only by case) always wins; only when
+    no e-mail matches is the value treated as a username. Both columns are unique, so
+    each step yields at most one row and no ordering depends on the database. Anyone who
+    cannot own the e-mail therefore can never capture, shadow or lock out that address
+    by choosing a username (usernames cannot contain '@' in any case)."""
+    by_email = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalize_email(identifier))
+        .order_by(User.id)
+        .first()
+    )
+    if by_email is not None:
+        return by_email
+    return db.query(User).filter(User.username == identifier).one_or_none()
 
 
 def login_user(
@@ -38,16 +87,10 @@ def login_user(
     identifier: str,
     password: str,
 ):
-    db_user = (
-        db.query(User)
-        .filter(
-            (User.email == identifier)
-            | (User.username == identifier)
-        )
-        .first()
-    )
+    db_user = _find_login_user(db, identifier)
 
     if not db_user:
+        _equalize_timing(password)
         return None
 
     if not verify_password(
@@ -57,10 +100,72 @@ def login_user(
         return None
 
     access_token = create_access_token(
-        {"sub": db_user.email}
+        {"sub": db_user.email, "pv": password_fingerprint(db_user.hashed_password)}
     )
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
     }
+
+
+def change_password(db: Session, user: User, current_password: str, new_password: str):
+    """Returns a fresh token, or None when the current password is wrong or the new one
+    equals it. Every token issued before this call stops working."""
+    if not verify_password(current_password, user.hashed_password):
+        return None
+    if verify_password(new_password, user.hashed_password):
+        return None
+    user.hashed_password = hash_password(new_password)
+    db.commit()
+    db.refresh(user)
+    return {
+        "access_token": create_access_token(
+            {"sub": user.email, "pv": password_fingerprint(user.hashed_password)}
+        ),
+        "token_type": "bearer",
+    }
+
+
+class AccountGone(Exception):
+    """The account was already deleted (for example by a concurrent request)."""
+
+
+def delete_account(db: Session, user: User, password: str) -> bool:
+    """Permanently deletes the account and everything it owns (cascade) plus its quota
+    counters. Requires the password again.
+
+    Returns False when the password is wrong (or was changed while this ran); raises
+    AccountGone when the account no longer exists.
+
+    Lock order (must match ai_quota_service.reserve): the USER row first, usage rows second.
+    reserve() takes a shared lock on the user row and then updates the usage rows; taking the
+    exclusive user-row lock here before touching the usage rows keeps both operations in the
+    same order, so they cannot deadlock. Only this one row is locked, and only after the
+    (slow) password check, so wrong passwords never take a lock.
+    """
+    if not verify_password(password, user.hashed_password):
+        return False
+    from sqlalchemy import select
+
+    from src.models.ai_usage import AiUsageDaily
+
+    user_id = user.id
+    verified_hash = user.hashed_password
+    locked = db.execute(
+        select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if locked is None:
+        db.rollback()
+        raise AccountGone()
+    if locked.hashed_password != verified_hash:
+        # The password changed between the check and the lock: the confirmation no longer holds.
+        db.rollback()
+        return False
+
+    db.query(AiUsageDaily).filter(AiUsageDaily.scope == f"user:{user_id}").delete(
+        synchronize_session=False
+    )
+    db.delete(locked)
+    db.commit()
+    return True

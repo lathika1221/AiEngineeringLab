@@ -1,0 +1,157 @@
+.wolf {
+  --wolf-eye: #3d8bff;
+  --wolf-eye-edge: #1f4fd8;
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.wolf__eye-mid {
+  stop-color: var(--wolf-eye);
+  transition: stop-color 300ms ease;
+}
+
+.wolf__eye-edge {
+  stop-color: var(--wolf-eye-edge);
+  transition: stop-color 300ms ease;
+}
+
+.wolf__eye-glow {
+  fill: var(--wolf-eye);
+  opacity: 0.85;
+  transition: fill 300ms ease;
+}
+
+.wolf__shade {
+  fill: #030817;
+  opacity: 0.3;
+}
+
+.wolf__rim {
+  fill: none;
+  stroke: #5fa2ff;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  opacity: 0.55;
+}
+
+.wolf__halo {
+  fill: rgba(31, 79, 216, 0.16);
+  filter: blur(14px);
+}
+
+.wolf__eyes {
+  transform-origin: 100px 112px;
+}
+
+/* Thinking: the eyes breathe while LATZ works. */
+.wolf--thinking .wolf__eye-glow {
+  animation: wolf-think 1.2s ease-in-out infinite;
+}
+
+.wolf--thinking .wolf__rim {
+  animation: wolf-rim 1.2s ease-in-out infinite;
+}
+
+/* Success: one short flare. */
+.wolf--success {
+  --wolf-eye: #6ff0c0;
+  --wolf-eye-edge: #1fa97a;
+}
+
+.wolf--success .wolf__eyes {
+  animation: wolf-flare 600ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+/* Error: amber warning eyes, no motion. */
+.wolf--error {
+  --wolf-eye: #ffb45c;
+  --wolf-eye-edge: #d9632a;
+}
+
+.wolf--error .wolf__rim {
+  stroke: #ffb45c;
+}
+
+@keyframes wolf-think {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes wolf-rim {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes wolf-flare {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Disconnected: eyes dim to a cold grey-blue and the mark goes still. */
+.wolf--offline {
+  --wolf-eye: #5b6b8c;
+  --wolf-eye-edge: #33415f;
+}
+
+.wolf--offline .wolf__eye-glow {
+  opacity: 0.25;
+}
+
+.wolf--offline .wolf__rim {
+  opacity: 0.25;
+}
+
+/* Depth (hero only): three layers drift a few units against the pointer; a sheen slides across the metal. */
+.wolf--depth .wolf__head {
+  transform: translate(calc(var(--wolf-x, 0) * 2px), calc(var(--wolf-y, 0) * 2px));
+  transition: transform 180ms ease-out;
+}
+
+.wolf--depth .wolf__eyes {
+  transform: translate(calc(var(--wolf-x, 0) * 4px), calc(var(--wolf-y, 0) * 3px));
+  transition: transform 180ms ease-out;
+}
+
+.wolf--depth .wolf__rim {
+  transform: translate(calc(var(--wolf-x, 0) * 1px), calc(var(--wolf-y, 0) * 1px));
+  transition: transform 180ms ease-out;
+}
+
+.wolf--depth .wolf__halo {
+  transform: translate(calc(var(--wolf-x, 0) * -5px), calc(var(--wolf-y, 0) * -4px));
+  transition: transform 180ms ease-out;
+}
+
+.wolf--depth .wolf__sheen {
+  opacity: 0.8;
+  transform: translateX(calc(var(--wolf-x, 0) * 38px + 60px));
+  transition: transform 220ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wolf--depth .wolf__head,
+  .wolf--depth .wolf__eyes,
+  .wolf--depth .wolf__rim,
+  .wolf--depth .wolf__halo,
+  .wolf--depth .wolf__sheen {
+    transform: none;
+  }
+}

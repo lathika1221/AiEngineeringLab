@@ -5,6 +5,9 @@ from src.auth.dependencies import get_current_user
 from src.database.session import get_db
 
 from src.models.user import User
+from src.schemas.user import AccountDeletion
+from src.security.rate_limit import limit_account_change
+from src.services.auth_service import AccountGone, delete_account
 
 from src.services.context_service import get_user_context
 
@@ -46,6 +49,22 @@ router = APIRouter(
     prefix="/users",
     tags=["Users"],
 )
+
+
+@router.post("/me/delete", status_code=204)
+def delete_my_account(
+    body: AccountDeletion,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    limit_account_change(current_user.id)
+    try:
+        deleted = delete_account(db, current_user, body.password)
+    except AccountGone:
+        # A concurrent request already deleted it.
+        raise HTTPException(status_code=401, detail="This account no longer exists.", headers={"WWW-Authenticate": "Bearer"})
+    if not deleted:
+        raise HTTPException(status_code=400, detail="Password is incorrect.")
 
 
 @router.get("/me")

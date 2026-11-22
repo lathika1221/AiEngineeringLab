@@ -72,17 +72,25 @@ Decision for PR #4: option 1; revisit option 2 together with the enforcement pro
 
 ### Preview deployments
 
-`_headers` adds `X-Robots-Tag: noindex` for `<hash>.latz-ai.pages.dev` so previews are not indexed. **noindex is not access control**: previews are publicly reachable by anyone with the link. They talk to the production API, but CORS only allows the production origin, so a preview cannot call it from a browser.
+**Status (2026-11-21): preview deployments are intentionally disabled** until a secure access solution is chosen and approved. Nothing is protecting previews; there are simply none.
 
-**Restricting previews with Cloudflare Access (not applied; do it only with explicit approval).** Exact configuration:
+- Cloudflare Pages, project `latz-ai`, Settings, Branch control, **Preview branch = None**. Pushing a non-production branch no longer builds or publishes a `*.latz-ai.pages.dev` URL. Verified after reloading the dashboard.
+- The production branch (`feature/latz-frontend-redesign`) and "automatic production branch deployments" are unchanged. Production is public at `https://latz-ai.pages.dev` and is unaffected.
+- Deployments removed on 2026-11-21 because their hash URLs were public (a preview URL served the full app with only `X-Robots-Tag: noindex`): `10965765` (preview, `99c89b5`), `d489de35` (preview, `52ecd05`), `bf7f167f` (preview, `3a2e45f`) and `e57fefa6` (old production deployment of `249c46a`). Each URL now returns 404 "Deployment Not Found", as does the branch alias `feature-phase2-multiuser-har.latz-ai.pages.dev`.
+- Still present: the active production deployment `bd1ef71b` (`d7e098f`) and the older production deployment `b49b0ef1` (`5f7294c`), kept as the frontend rollback target. `b49b0ef1` still has a public hash URL; delete it if the rollback target is no longer needed.
+- Because deployments are immutable and reachable by hash, **a protection added later does not cover older deployments**: delete old ones when you add protection.
 
-1. Cloudflare dashboard, Workers & Pages, project `latz-ai`, Settings, General, **Enable access policy**. Cloudflare creates an Access application for the preview hostnames `*.latz-ai.pages.dev` only, with an Allow policy for the members of your Cloudflare account, using the one-time-PIN e-mail login.
-2. Zero Trust, Access, Applications: open that application and check the **destination** is the preview wildcard `*.latz-ai.pages.dev` and nothing broader. Keep the policy Action = Allow, Include = your own e-mail address (or account members). No bypass rule, no "everyone".
-3. **Do not add the production host** `latz-ai.pages.dev` to this application: the site is a public demo and would stop loading for visitors. (Cloudflare's per-project switch covers previews only; protecting the production `pages.dev` host is a separate manual step and is deliberately not wanted here.)
-4. Verify in a private window: a preview URL shows the Cloudflare Access login page; `https://latz-ai.pages.dev` still loads the app with no login; the production API and CORS behaviour are unchanged.
-5. Rollback: Settings, General, disable the access policy (or delete the Access application). Nothing else depends on it.
+**Why not Cloudflare Access.** Zero Trust requires a card and billing authorisation even for the Free plan, so it was not activated. The configuration below is kept for the day it is (do it only with explicit approval):
 
-Caveat: branch aliases such as `<branch>.latz-ai.pages.dev` match the same wildcard, so they are protected too; CI that fetches a preview URL would need a Service Auth token policy.
+1. Cloudflare dashboard, Workers & Pages, project `latz-ai`, Settings, General, Preview access, **Restrict previews**. Cloudflare creates an Access application for the preview hostnames `*.latz-ai.pages.dev` only, with an Allow policy and one-time-PIN e-mail login.
+2. Zero Trust, Access, Applications: check the **destination** is `*.latz-ai.pages.dev` and nothing broader. Policy Action = Allow, Include = `Lathikasasimanikandan@gmail.com`, no bypass rule, no "everyone", One-time PIN only, session 24 hours.
+3. **Do not add the production host** `latz-ai.pages.dev`: the site is a public demo.
+4. Verify in a private window: a preview URL shows the Access login; `https://latz-ai.pages.dev` loads with no login; `/health/ready` is 200 and `/auth/register` is 403.
+5. Rollback: disable Restrict previews (or delete the Access application).
+
+**Alternative evaluated, not implemented: a Pages Functions password gate.** A global `functions/_middleware.js` that passes through when the host is exactly `latz-ai.pages.dev` and requires Basic auth (secrets set in the Preview environment only) was prototyped locally and gated HTML, assets, SPA routes, POST and OPTIONS on preview hosts. Limits that make it a second choice: it only protects deployments that contain it (older ones and branches cut earlier stay public); it also runs on production requests and counts against the 100,000 requests per day free quota; on exhaustion "fail open" serves previews ungated and "fail closed" errors production; it offers one shared secret rather than a per-identity login. An Oracle Always Free reverse proxy was rejected: it does not protect the original `pages.dev` URLs, needs a card, and Always Free instances can be reclaimed when idle.
+
+**To re-enable previews safely:** first choose and approve one of the above, then set Preview branch back to "All non-production branches" (or a named branch), then verify a preview URL is gated before sharing it. Rollback of this change is that same setting.
 
 ## 5. Smoke tests (in this order)
 1. Open the site, then refresh on `/projects` and on `/login`: no 404.
@@ -121,7 +129,7 @@ Do this only when you want the chat to work. Quotas and rate limits are now enfo
   - *Streams:* a stream slot is freed on completion, error, cancellation and disconnect. The slot is leased: every streamed chunk renews a 5-minute idle lease, so a long stream that keeps producing output keeps its slot, and no stream may hold a slot longer than 10 minutes in total (it is ended with a "timeout" marker). A stream that is silent for more than 5 minutes (a hung provider call) is treated as dead, its slot can be reused, and it is stopped if it wakes up; for that one stalled stream the cap of `AI_MAX_CONCURRENT_STREAMS` is therefore not guaranteed. A client that disconnects before the first byte may leave one request counted against its quota.
   - *Errors:* chat failures return a generic HTTP 502 and logs keep only the error class and status, never provider messages, keys or addresses.
 - No Content-Security-Policy yet (Google Fonts and an inline theme script need hashes or self-hosting first).
-- Cloudflare preview deployments use other addresses and would be blocked by CORS.
+- Cloudflare preview deployments are currently disabled (see section 4, Preview deployments). If re-enabled, they use other addresses and would be blocked by CORS.
 - The first request after Neon sleeps, and any request during a Render deploy, can be slow or fail briefly.
 
 ## 9. Railway: client address for login rate limiting
